@@ -226,7 +226,6 @@ function VisionCameraTile({
 }
 
 // ---- Add Camera Modal ----
-const ZONE_OPTIONS = ["Entrance", "Floor", "Bar", "Patio", "Exit"];
 
 function AddCameraModal({
   onClose,
@@ -312,17 +311,13 @@ function AddCameraModal({
             <label className="mb-1.5 block text-xs font-medium text-zinc-700">
               Zone
             </label>
-            <select
+            <input
+              type="text"
               value={zone}
               onChange={(e) => setZone(e.target.value)}
-              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-            >
-              {ZONE_OPTIONS.map((z) => (
-                <option key={z} value={z}>
-                  {z}
-                </option>
-              ))}
-            </select>
+              placeholder="e.g. Entrance, Floor, Bar…"
+              className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+            />
           </div>
 
           <div>
