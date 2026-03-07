@@ -70,7 +70,7 @@ RESEND_API_KEY=
 ```
 
 **Getting credentials:**
-- **Supabase** — Create a project at [supabase.com](https://supabase.com). For `SUPABASE_URL`: click **Connect** in the top header → **App Frameworks** → copy the Project URL. For `SUPABASE_SECRET_KEY`: go to **Settings → API** and copy the `service_role` secret key (not the anon key).
+- **Supabase** — Create a project at [supabase.com](https://supabase.com). For `SUPABASE_URL`: click **Connect** in the top header → **API Keys** → copy the Project URL. For `SUPABASE_SECRET_KEY`: go to **Settings → API Keys** and copy the secret key.
 - **Resend** — Go to [resend.com](https://resend.com), navigate to API Keys → Create API Key. Copy the key as `RESEND_API_KEY`.
 
 ### 3. Verify connections
