@@ -18,40 +18,82 @@ npm run test:resend    # Test Resend email connection (requires .env)
 
 Tests use `npx tsx --env-file=.env` — ensure a `.env` file exists with the required variables before running them.
 
-## Project: Dine & Dash Defender
+## Project: Reception Bot (Primary — Hack-Attack 2026)
 
-A real-time computer vision security layer for restaurants that reduces revenue loss from dine-and-dash incidents. Built for Hack-Attack 2026 "Bettering Businesses" theme.
+A computer-vision-powered reception system for restaurants. An iPhone camera + YOLO detects arriving guests and their party size. A kiosk screen then guides them through seating via simple button taps — no human host needed. Built for Hack-Attack 2026 "Bettering Businesses" theme.
+
+### Two Sides of the App
+
+- **Business Side (Staff Dashboard)** — Staff configure table zones and monitor floor state in real time
+- **Consumer Side (Kiosk)** — Guest-facing screen at the entrance; shows greeting and guides seating via tappable buttons
 
 ### How It Works (end-to-end)
 
-1. **Camera Feed (WebRTC)** — A device camera (e.g. an iPhone) monitors the restaurant floor and exit, streaming in real-time to the Python microservice via WebRTC.
-2. **Vision Engine (Python + YOLO)** — YOLO detects all persons in frame. A heuristic (TBD — options include uniform color detection or staff-only zone origin) filters out employees. Customer bounding boxes are tracked; rapid movement toward the designated "Exit Zone" polygon flags them as a suspect.
-3. **Evidence Capture (Supabase Storage)** — The moment a suspect crosses the threshold, their bounding box is cropped and uploaded as a JPEG to a Supabase Storage bucket.
-4. **Live Staff Dashboard (Next.js + Supabase Realtime)** — The Python service inserts a row into the `alerts` table. The Next.js frontend, subscribed via Supabase Realtime WebSockets, instantly receives the payload and flashes a high-visibility shadcn toast notification to staff.
-5. **Incident Report (Resend)** — Simultaneously, an automated email is sent to management containing the time, location, and cropped suspect image from Supabase Storage.
+1. **Staff Setup (Business Side)** — Staff pre-configure table zones: name, seating capacity, and physical location. The camera view is mapped to these zones so YOLO can determine which tables are occupied vs. free.
+2. **Guest Detection** — The iPhone camera streams to the Python/YOLO microservice via WebRTC. YOLO counts the number of people approaching and detects which tables are currently occupied.
+3. **Kiosk Greeting (Consumer Side)** — The kiosk auto-displays: *"Welcome! We see a party of 5. Do you have a reservation?"* Party size is inferred from the camera. Guest taps **Yes** or **No**.
+4. **Reservation Flow (Yes)** — System looks up the reservation and displays: *"Proceed to Table 4 on your left."* Table state updates to occupied in Supabase.
+5. **Walk-in Flow (No):**
+   - YOLO-tracked occupancy is queried for a free table with sufficient capacity.
+   - **Table available** → display: *"Table 7 is ready for you."* Table state updates to occupied.
+   - **All tables full** → calculate estimated wait time from dwell time of occupied tables (`now - seated_at`). Display wait estimate. Guest enters email to join waitlist.
+6. **Email Notification (Resend)** — When a table frees up (YOLO detects empty or staff marks free), Resend fires an email to the next waitlisted guest: *"Your table is ready!"*
+7. **Staff Dashboard (Next.js + Supabase Realtime)** — Live floor map with table states (free / occupied / reserved), dwell timers, and waitlist queue. All updates flow via Supabase Realtime from the Python service writing to Supabase.
+
+### Kiosk Screen Flow
+
+```
+Camera detects party of N approaching
+  └─ Kiosk: "Welcome! Party of N — do you have a reservation?"
+       ├─ [Yes] → confirm reservation → "Proceed to Table X"
+       └─ [No]  → check YOLO-tracked table availability
+                  ├─ Table free (capacity ≥ N) → "Table X is ready for you"
+                  └─ All full → show estimated wait time
+                                └─ Guest enters email → waitlist entry created
+                                    └─ Table frees → Resend email → guest returns
+```
+
+### Additional Kiosk Option
+- **[Call a staff member]** button → triggers a notification on the staff dashboard
 
 ## Architecture
 
-- **[app/](app/)** — Next.js App Router staff dashboard. Subscribes to Supabase Realtime for live alert toasts.
+- **[app/](app/)** — Next.js App Router. Contains:
+  - Staff dashboard: live floor map, table states, waitlist, dwell timers
+  - Reception Bot UI: kiosk-facing guest-interaction interface
 - **[lib/](lib/)** — Shared service clients:
-  - [lib/supabase.ts](lib/supabase.ts) — Supabase client (`SUPABASE_URL` + `SUPABASE_SECRET_KEY`); used for DB writes, Realtime subscriptions, and Storage
-  - [lib/resend.ts](lib/resend.ts) — Resend client (`RESEND_API_KEY`); sends automated incident report emails
+  - [lib/supabase.ts](lib/supabase.ts) — Supabase client (`SUPABASE_URL` + `SUPABASE_SECRET_KEY`); used for DB reads/writes, Realtime subscriptions
+  - [lib/resend.ts](lib/resend.ts) — Resend client (`RESEND_API_KEY`); sends waitlist-ready and reservation confirmation emails
   - [lib/utils.ts](lib/utils.ts) — `cn` helper for Tailwind class merging
 - **[tests/](tests/)** — Connectivity tests for Supabase and Resend
-- **Python microservice** (separate service, not in this repo) — Receives WebRTC stream, runs YOLO inference, uploads evidence to Supabase Storage, and inserts alert rows
 
 ### Supabase Schema (expected)
-- `alerts` table — written by the Python service; columns include timestamp, location, and image URL from Storage
-- Supabase Storage bucket — holds cropped suspect JPEG evidence images
+- `tables` — staff-configured table zones: `id`, `name`, `capacity`, `status` (`free`/`occupied`/`reserved`), `seated_at` (timestamp for dwell tracking)
+- `reservations` — `id`, `guest_name`, `party_size`, `reserved_for` (timestamp), `table_id`, `status`
+- `waitlist` — `id`, `guest_name`, `party_size`, `email`, `joined_at`, `notified_at`
 
-### Known Limitation & Future Direction
+---
 
-The current system triggers an alert only after a customer has already left the premises — by that point, intervention is too late. The goal is to fire the alert before they reach the door.
+## Secondary Feature: Dine & Dash Defender (implement if time permits)
 
-**Future Solution:**
-- **Table Mapping:** Map the camera view to specific table numbers
-- **State Checking:** When YOLO tracks a person walking from a table to the exit, query the POS API for that table's payment status
-- **Decision:** If POS returns "Paid" → ignore exit. If "Open/Unpaid" → fire the alert before they reach the door
+A real-time computer vision security layer that reduces revenue loss from dine-and-dash incidents.
+
+### How It Works (end-to-end)
+
+1. **Camera Feed (WebRTC)** — A device camera monitors the restaurant floor and exit, streaming in real-time to the Python microservice via WebRTC.
+2. **Vision Engine (Python + YOLO)** — YOLO detects all persons in frame. Employees are filtered out via heuristic (uniform color detection or staff-only zone origin). Customer bounding boxes are tracked; rapid movement toward the "Exit Zone" polygon flags them as a suspect.
+3. **Evidence Capture (Supabase Storage)** — The suspect's bounding box is cropped and uploaded as a JPEG to Supabase Storage.
+4. **Live Alert (Next.js + Supabase Realtime)** — Python inserts a row into `alerts`; the dashboard receives it via Realtime and flashes a shadcn toast to staff.
+5. **Incident Report (Resend)** — Automated email sent to management with time, location, and suspect image.
+
+### Dine & Dash: Future Direction (POS Integration)
+- **Table Mapping:** Map camera view to table numbers
+- **State Checking:** When YOLO tracks a person walking from table to exit, query POS API for that table's payment status
+- **Decision:** "Paid" → ignore. "Open/Unpaid" → fire alert before they reach the door
+
+### Dine & Dash: Supabase Schema
+- `alerts` table — `id`, `timestamp`, `location`, `image_url`
+- Supabase Storage bucket — cropped suspect JPEG evidence images
 
 ## Submission
 
@@ -98,6 +140,6 @@ npm run dev
 - Next.js 16 with React 19 (App Router, TypeScript)
 - Tailwind CSS v4 + shadcn/ui (Radix UI + CVA + tailwind-merge)
 - Supabase (Postgres, Realtime WebSockets, Storage)
-- Resend (automated incident report emails)
-- Python + YOLO (Ultralytics) — vision microservice
-- WebRTC — camera-to-backend video transport
+- Resend (waitlist-ready + reservation confirmation emails)
+- Python + YOLO (Ultralytics) — vision microservice; detects party size at entrance and table occupancy
+- WebRTC — iPhone camera-to-Python video transport
