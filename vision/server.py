@@ -87,6 +87,7 @@ class CameraStream:
         self._frame_queue: queue.Queue[bytes] = queue.Queue(maxsize=2)
         self.running = False
         self._thread: Optional[threading.Thread] = None
+        self._cap: Optional[cv2.VideoCapture] = None
 
     def start(self) -> None:
         self.running = True
@@ -95,10 +96,14 @@ class CameraStream:
 
     def stop(self) -> None:
         self.running = False
+        # Release immediately so macOS frees the Continuity Camera indicator
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
 
     def _capture_loop(self) -> None:
-        cap = cv2.VideoCapture(self.source)
-        if not cap.isOpened():
+        self._cap = cv2.VideoCapture(self.source)
+        if not self._cap.isOpened():
             print(f"[CameraStream {self.camera_id}] Unable to open source {self.source}", file=sys.stderr)
             self.running = False
             return
@@ -106,6 +111,9 @@ class CameraStream:
         print(f"[CameraStream {self.camera_id}] Started — source {self.source}", file=sys.stderr)
 
         while self.running:
+            cap = self._cap
+            if cap is None:
+                break
             ok, frame = cap.read()
             if not ok:
                 time.sleep(0.05)
@@ -130,7 +138,9 @@ class CameraStream:
             except queue.Full:
                 pass
 
-        cap.release()
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
         print(f"[CameraStream {self.camera_id}] Stopped.", file=sys.stderr)
 
     def generate(self):
