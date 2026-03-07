@@ -302,7 +302,7 @@ function AddCameraModal({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. iPhone Entrance Cam"
+              placeholder="e.g. iPhone Main Cam"
               className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             />
           </div>
@@ -332,8 +332,7 @@ function AddCameraModal({
               className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             />
             <p className="mt-1 text-[11px] text-zinc-400">
-              0 = default webcam / iPhone via Continuity Camera. Use 1, 2 … for
-              additional devices.
+              0 = iPhone via Continuity Camera. Use 1, 2 … for additional devices.
             </p>
           </div>
 
