@@ -5,31 +5,39 @@ import { useEffect, useRef, useState } from "react";
 
 const VISION_SERVER = "http://localhost:8000";
 
+type MessageStage = "greeting" | "party-size" | "reservation-prompt" | "buttons";
+
+interface TypedMessage {
+  text: string;
+  displayedText: string;
+  isComplete: boolean;
+}
+
 export default function WelcomePage() {
+  // Camera / YOLO state
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inflight = useRef(false);
   const [partySize, setPartySize] = useState<number | null>(null);
   const [annotatedFrame, setAnnotatedFrame] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState(false);
-  const [arrivalTime, setArrivalTime] = useState<string | null>(null);
   const prevPartySize = useRef<number | null>(null);
 
+  // Typing animation state
+  const [stage, setStage] = useState<MessageStage>("greeting");
+  const [messages, setMessages] = useState<TypedMessage[]>([
+    { text: "Welcome to Restaurant X", displayedText: "", isComplete: false },
+  ]);
+  const [showButtons, setShowButtons] = useState(false);
+
+  const typingSpeed = 50;
+
+  // Track previous party size for change detection
   useEffect(() => {
-    if (partySize === null) return;
-    const wasEmpty = prevPartySize.current === null || prevPartySize.current === 0;
-    if (partySize > 0 && wasEmpty) {
-      // First detection — lock the arrival time
-      setArrivalTime(
-        new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      );
-    } else if (partySize === 0) {
-      // Everyone left — reset so next arrival gets a fresh timestamp
-      setArrivalTime(null);
-    }
     prevPartySize.current = partySize;
   }, [partySize]);
 
+  // Camera setup and YOLO detection
   useEffect(() => {
     let stream: MediaStream | null = null;
     let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -41,7 +49,6 @@ export default function WelcomePage() {
         if (!video) return;
         video.srcObject = stream;
         await video.play();
-
         intervalId = setInterval(detectFrame, 300);
       } catch {
         setCameraError(true);
@@ -49,12 +56,11 @@ export default function WelcomePage() {
     }
 
     function detectFrame() {
-      if (inflight.current) return; // skip if previous request still running
+      if (inflight.current) return;
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
 
-      // Scale down to 320px wide to reduce transfer size and YOLO input size
       const scale = 320 / (video.videoWidth || 640);
       canvas.width = 320;
       canvas.height = Math.round((video.videoHeight || 480) * scale);
@@ -90,80 +96,112 @@ export default function WelcomePage() {
     };
   }, []);
 
-  const displaySize =
-    partySize !== null
-      ? `Party of ${partySize} detected.`
-      : "Detecting party size…";
+  // Typing animation effect
+  useEffect(() => {
+    const currentMessage = messages[messages.length - 1];
+    if (!currentMessage || currentMessage.isComplete) return;
+
+    const timeout = setTimeout(() => {
+      const nextChar = currentMessage.text[currentMessage.displayedText.length];
+      const updatedMessages = [...messages];
+      updatedMessages[updatedMessages.length - 1] = {
+        ...currentMessage,
+        displayedText: currentMessage.displayedText + nextChar,
+      };
+      if (updatedMessages[updatedMessages.length - 1].displayedText.length === currentMessage.text.length) {
+        updatedMessages[updatedMessages.length - 1].isComplete = true;
+      }
+      setMessages(updatedMessages);
+    }, typingSpeed);
+
+    return () => clearTimeout(timeout);
+  }, [messages]);
+
+  // Stage transition effect
+  useEffect(() => {
+    const currentMessage = messages[messages.length - 1];
+    if (!currentMessage?.isComplete) return;
+
+    const transitionTimer = setTimeout(() => {
+      switch (stage) {
+        case "greeting":
+          setStage("party-size");
+          setMessages((prev) => [
+            ...prev,
+            {
+              text: `We saw you have a party of ${partySize ?? "?"}.`,
+              displayedText: "",
+              isComplete: false,
+            },
+          ]);
+          break;
+
+        case "party-size":
+          setStage("reservation-prompt");
+          setMessages((prev) => [
+            ...prev,
+            {
+              text: "Do you have a reservation?",
+              displayedText: "",
+              isComplete: false,
+            },
+          ]);
+          break;
+
+        case "reservation-prompt":
+          setStage("buttons");
+          setShowButtons(true);
+          break;
+
+        case "buttons":
+          break;
+      }
+    }, 2000);
+
+    return () => clearTimeout(transitionTimer);
+  }, [stage, messages, partySize]);
 
   return (
-    <main className="min-h-screen bg-zinc-50 font-sans antialiased text-black">
-      <div className="mx-auto flex w-full max-w-7xl flex-col px-6 py-10 md:px-10">
-        <header className="mb-12 flex items-center justify-between">
+    <main className="min-h-screen bg-gradient-to-br from-zinc-50 to-zinc-100 font-sans antialiased text-black">
+      <div className="mx-auto flex w-full max-w-4xl flex-col px-6 py-10 md:px-10">
+        {/* Header */}
+        <header className="mb-20 flex items-center justify-between">
           <p className="text-2xl font-semibold tracking-tight">Restaurant X</p>
           <p className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white">
             Kiosk Check-in
           </p>
         </header>
 
-        <section className="grid items-center gap-10 lg:grid-cols-2">
-          <div>
-            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
-              Welcome
-            </p>
-            <h1 className="text-balance text-5xl font-semibold tracking-tight md:text-7xl">
-              Welcome to
-              <br />
-              Restaurant X
-            </h1>
-            <p className="mt-5 max-w-xl text-lg text-zinc-500 md:text-2xl">
-              {displaySize} Do you have a reservation?
-            </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link
-                href="/admin/customer/confirm-reservation"
-                className="rounded-lg bg-black px-7 py-4 text-center text-base font-semibold text-white transition hover:bg-zinc-800"
-              >
-                Yes, I do
-              </Link>
-              <Link
-                href="/admin/customer/table-free"
-                className="rounded-lg border border-zinc-300 bg-white px-7 py-4 text-center text-base font-semibold text-black transition hover:border-zinc-500"
-              >
-                No reservation
-              </Link>
-            </div>
-          </div>
+        {/* Conversation Container */}
+        <section className="flex flex-col items-center justify-center min-h-[500px]">
+          <div className="w-full max-w-2xl space-y-6">
+            {messages.length > 0 && (
+              <div className="animate-fade-in">
+                <h1 className="text-4xl md:text-6xl font-bold text-black leading-tight tracking-tight min-h-[80px]">
+                  {messages[messages.length - 1].displayedText}
+                  {!messages[messages.length - 1].isComplete && (
+                    <span className="animate-pulse">|</span>
+                  )}
+                </h1>
+              </div>
+            )}
 
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl">
-            <div className="space-y-3">
-              <div className="rounded-xl bg-zinc-50 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-                  Party Size
-                </p>
-                <p className="mt-1 text-2xl font-semibold">
-                  {partySize !== null ? `${partySize} Guests` : "Detecting…"}
-                </p>
-              </div>
-              <div className="rounded-xl bg-zinc-50 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-                  Arrival Time
-                </p>
-                <p className="mt-1 text-2xl font-semibold">
-                  {arrivalTime ?? "—"}
-                </p>
-              </div>
-              <div className="rounded-xl bg-zinc-50 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-                  Need Assistance?
-                </p>
-                <button
-                  type="button"
-                  className="mt-2 rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
+            {showButtons && (
+              <div className="mt-12 flex flex-col gap-4 sm:flex-row animate-fade-in">
+                <Link
+                  href="/admin/customer/confirm-reservation"
+                  className="flex-1 rounded-lg bg-black px-8 py-5 text-center text-base font-semibold text-white transition hover:bg-zinc-800 active:bg-black"
                 >
-                  Call Staff
-                </button>
+                  Yes, I do
+                </Link>
+                <Link
+                  href="/admin/customer/table-free"
+                  className="flex-1 rounded-lg border-2 border-black bg-white px-8 py-5 text-center text-base font-semibold text-black transition hover:bg-black hover:text-white"
+                >
+                  No reservation
+                </Link>
               </div>
-            </div>
+            )}
           </div>
         </section>
 
@@ -213,6 +251,23 @@ export default function WelcomePage() {
 
       {/* Hidden canvas used for frame capture */}
       <canvas ref={canvasRef} className="hidden" />
+
+      <style>{`
+        @keyframes fade-in {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .animate-fade-in {
+          animation: fade-in 0.5s ease-out;
+        }
+      `}</style>
     </main>
   );
 }
