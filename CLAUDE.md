@@ -73,7 +73,7 @@ Camera detects party of N approaching
 
 - **[app/](app/)** — Next.js App Router. Contains:
   - [app/page.tsx](app/page.tsx) — Public marketing/landing page
-  - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth)
+  - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth); redirects to `/admin/entry` on success
   - [app/logout/page.tsx](app/logout/page.tsx) — Logout route; signs out and redirects to `/login`
   - [app/admin/](app/admin/) — Kiosk-facing guest-interaction interface and admin routes (protected by `proxy.ts`):
     - [app/admin/layout.tsx](app/admin/layout.tsx) — Admin layout wrapper
@@ -84,7 +84,7 @@ Camera detects party of N approaching
       - [app/admin/customer/confirm-reservation/page.tsx](app/admin/customer/confirm-reservation/page.tsx) — Displays confirmed reservation details and assigned table
       - [app/admin/customer/table-free/page.tsx](app/admin/customer/table-free/page.tsx) — Displays available table and seating instructions for walk-in guests
       - [app/admin/customer/all-full/page.tsx](app/admin/customer/all-full/page.tsx) — Prompted when all tables are full; guest enters email to join waitlist
-    - [app/admin/test-route/page.tsx](app/admin/test-route/page.tsx) — Test/debug route
+    - [app/admin/entry/page.tsx](app/admin/entry/page.tsx) — Post-login landing page; animated typing sequence ("Welcome, Restaurant X." → "How would you like to proceed?") followed by two buttons: **Customer View** → `/admin/customer/welcome-page` and **Business View** → `/admin/business/dashboard`
 - **[lib/](lib/)** — Shared service clients:
   - [lib/supabase.ts](lib/supabase.ts) — Server-side Supabase client (`SUPABASE_URL` + `SUPABASE_SECRET_KEY`); bypasses RLS; use in API routes and server actions only
   - [lib/supabase-browser.ts](lib/supabase-browser.ts) — Browser-side Supabase client (`NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY`); uses `@supabase/ssr` `createBrowserClient`; stores session in cookies for proxy access
