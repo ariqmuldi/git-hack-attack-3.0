@@ -190,17 +190,15 @@ function VisionCameraTile({
         <div className="absolute left-3 top-3 flex items-center gap-1.5">
           <span className="size-2 rounded-full bg-emerald-500 shadow-sm" />
           <Wifi className="size-3.5 text-white/70" />
+          <button
+            type="button"
+            onClick={() => onRemove(camera.id)}
+            className="rounded bg-black/50 p-0.5 text-white/60 backdrop-blur-sm transition hover:bg-red-500/80 hover:text-white"
+            title="Remove camera"
+          >
+            <X className="size-3" />
+          </button>
         </div>
-
-        {/* Remove button */}
-        <button
-          type="button"
-          onClick={() => onRemove(camera.id)}
-          className="absolute right-10 top-2.5 rounded bg-black/60 p-0.5 text-white/70 backdrop-blur-sm hover:text-white"
-          title="Remove camera"
-        >
-          <X className="size-3.5" />
-        </button>
 
         <div className="absolute right-3 top-3">
           <span className="flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 text-xs font-semibold text-white backdrop-blur-sm">
@@ -384,6 +382,43 @@ export default function BusinessDashboardPage() {
   const [visionCameras, setVisionCameras] = useState<VisionCamera[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
 
+  // Restore persisted cameras on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("vision-cameras");
+    if (!saved) return;
+    let configs: Array<{ name: string; zone: string; source: number }>;
+    try {
+      configs = JSON.parse(saved);
+    } catch {
+      return;
+    }
+    configs.forEach(async (config) => {
+      try {
+        const res = await fetch(`${VISION_SERVER}/cameras`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setVisionCameras((prev) => [
+          ...prev,
+          {
+            id: data.camera_id,
+            name: data.name,
+            zone: data.zone,
+            source: data.source,
+            streamUrl: `${VISION_SERVER}/stream/${data.camera_id}`,
+            peopleCount: 0,
+          },
+        ]);
+      } catch {
+        // vision server not running — skip silently
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const analysisVideoRef = useRef<HTMLVideoElement>(null);
   const analysisCanvasRef = useRef<HTMLCanvasElement>(null);
   const detectInflightRef = useRef(false);
@@ -475,13 +510,32 @@ export default function BusinessDashboardPage() {
     return () => clearInterval(interval);
   }, [stream]);
 
+  function persistCameras(cameras: VisionCamera[]) {
+    localStorage.setItem(
+      "vision-cameras",
+      JSON.stringify(cameras.map(({ name, zone, source }) => ({ name, zone, source })))
+    );
+  }
+
+  function handleAddCamera(cam: VisionCamera) {
+    setVisionCameras((prev) => {
+      const next = [...prev, cam];
+      persistCameras(next);
+      return next;
+    });
+  }
+
   async function handleRemoveCamera(id: string) {
     try {
       await fetch(`${VISION_SERVER}/cameras/${id}`, { method: "DELETE" });
     } catch {
       // best-effort
     }
-    setVisionCameras((prev) => prev.filter((c) => c.id !== id));
+    setVisionCameras((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      persistCameras(next);
+      return next;
+    });
   }
 
   const browserCameraData = useMemo(() =>
@@ -658,7 +712,7 @@ export default function BusinessDashboardPage() {
       {showAddModal && (
         <AddCameraModal
           onClose={() => setShowAddModal(false)}
-          onAdd={(cam) => setVisionCameras((prev) => [...prev, cam])}
+          onAdd={handleAddCamera}
         />
       )}
     </main>
