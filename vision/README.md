@@ -27,6 +27,7 @@ This folder contains a Python-only real-time pipeline for:
 - `vision/utils/visualizer.py` - debug overlays for demoability
 - `vision/utils/state_writer.py` - periodic JSON snapshots
 - `vision/tools/polygon_picker.py` - click helper for table polygons
+- `vision/tools/table_config_ui.py` - employee table-box configuration UI on live feed
 - `vision/requirements.txt` - dependencies
 
 ## Setup
@@ -125,3 +126,31 @@ Controls:
 - `c`: clear points
 - `s`: save JSON
 - `q`/`Esc`: quit
+
+## Employee table configuration UI
+
+Draw table boxes directly on a live camera feed and set seats/table metadata:
+
+```bash
+python vision/tools/table_config_ui.py \
+  --config vision/config/sample_restaurant.yaml \
+  --source 0
+```
+
+Controls:
+- `p`: pause/resume (draw only when paused)
+- Mouse drag (left button): draw a table rectangle
+- `u`: undo last table
+- `c`: clear all tables
+- `l`: list tables in terminal
+- `s`: save tables to YAML
+- `q`/`Esc`: quit
+
+Optional output path:
+
+```bash
+python vision/tools/table_config_ui.py \
+  --config vision/config/sample_restaurant.yaml \
+  --output vision/config/my_restaurant.yaml \
+  --source /path/to/video.mp4
+```
