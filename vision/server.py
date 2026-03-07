@@ -87,7 +87,6 @@ class CameraStream:
         self._frame_queue: queue.Queue[bytes] = queue.Queue(maxsize=2)
         self.running = False
         self._thread: Optional[threading.Thread] = None
-        self._cap: Optional[cv2.VideoCapture] = None
 
     def start(self) -> None:
         self.running = True
@@ -95,53 +94,49 @@ class CameraStream:
         self._thread.start()
 
     def stop(self) -> None:
+        # Only signal — never release _cap from outside the capture thread.
+        # Calling cap.release() while cap.read() is running on another thread
+        # crashes the AVFoundation layer on macOS.  The capture thread will
+        # release the device itself as soon as the current read returns.
         self.running = False
-        # Release immediately so macOS frees the Continuity Camera indicator
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
 
     def _capture_loop(self) -> None:
-        self._cap = cv2.VideoCapture(self.source)
-        if not self._cap.isOpened():
+        cap = cv2.VideoCapture(self.source)
+        if not cap.isOpened():
             print(f"[CameraStream {self.camera_id}] Unable to open source {self.source}", file=sys.stderr)
             self.running = False
             return
 
         print(f"[CameraStream {self.camera_id}] Started — source {self.source}", file=sys.stderr)
 
-        while self.running:
-            cap = self._cap
-            if cap is None:
-                break
-            ok, frame = cap.read()
-            if not ok:
-                time.sleep(0.05)
-                continue
+        try:
+            while self.running:
+                ok, frame = cap.read()
+                if not ok:
+                    time.sleep(0.05)
+                    continue
 
-            results = model(frame, classes=[0], conf=0.35, imgsz=320, verbose=False)
-            result = results[0]
-            self.people_count = len(result.boxes) if result.boxes is not None else 0
+                results = model(frame, classes=[0], conf=0.35, imgsz=320, verbose=False)
+                result = results[0]
+                self.people_count = len(result.boxes) if result.boxes is not None else 0
 
-            annotated = result.plot()
-            _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            frame_bytes = buf.tobytes()
+                annotated = result.plot()
+                _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                frame_bytes = buf.tobytes()
 
-            # Drop the oldest frame if the queue is full so we stay real-time
-            if self._frame_queue.full():
+                # Drop the oldest frame if the queue is full so we stay real-time
+                if self._frame_queue.full():
+                    try:
+                        self._frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
                 try:
-                    self._frame_queue.get_nowait()
-                except queue.Empty:
+                    self._frame_queue.put_nowait(frame_bytes)
+                except queue.Full:
                     pass
-            try:
-                self._frame_queue.put_nowait(frame_bytes)
-            except queue.Full:
-                pass
-
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
-        print(f"[CameraStream {self.camera_id}] Stopped.", file=sys.stderr)
+        finally:
+            cap.release()
+            print(f"[CameraStream {self.camera_id}] Stopped.", file=sys.stderr)
 
     def generate(self):
         """Generator yielding MJPEG multipart chunks."""
