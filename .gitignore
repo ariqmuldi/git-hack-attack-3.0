@@ -37,7 +37,6 @@ venv/
 __pycache__/
 *.pyc
 vision/output/
-vision/models/
 
 # vercel
 .vercel
