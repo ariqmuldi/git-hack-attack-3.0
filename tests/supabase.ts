@@ -1,5 +1,5 @@
-// This file tests the connection to Supabase using the provided environment variables.
-// Run this file with npm run test:supabase to verify that the connection is working.
+// This file tests the connection to Supabase using the provided environment variables
+// Run this file with npm run test:supabase to verify that the connection is working
 
 import { createClient } from '@supabase/supabase-js'
 
