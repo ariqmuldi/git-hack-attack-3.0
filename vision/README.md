@@ -164,3 +164,11 @@ vision/.venv/bin/python vision/main.py --config vision/config/sample_restaurant.
 
 Run with test footage from /test_footage
 vision/.venv/bin/python vision/main.py --config vision/config/sample_restaurant.yaml --source test_footage/footage.mp4
+
+
+Use this exact flow.
+
+Install deps once
+python3 -m venv vision/.venv
+source vision/.venv/bin/activate
+pip install -r vision/requirements.txt
