@@ -48,14 +48,23 @@ A computer-vision-powered reception system for restaurants. An iPhone camera + Y
 
 ```
 Camera detects party of N approaching
-  └─ Kiosk: "Welcome! Party of N — do you have a reservation?"
-       ├─ [Yes] → confirm reservation → "Proceed to Table X"
-       └─ [No]  → check YOLO-tracked table availability
+  └─ Kiosk (Welcome Page - typing animation):
+       1. "Welcome to Restaurant X" (types out, 2s pause)
+       2. "We saw you have a party of N." (types out, 2s pause)
+       3. "Do you have a reservation?" (types out)
+       ├─ [Yes, I do] → confirm reservation → "Proceed to Table X"
+       └─ [No reservation] → check YOLO-tracked table availability
                   ├─ Table free (capacity ≥ N) → "Table X is ready for you"
                   └─ All full → show estimated wait time
                                 └─ Guest enters email → waitlist entry created
                                     └─ Table frees → Resend email → guest returns
 ```
+
+**Welcome Page Features:**
+- Conversational typing animation (character-by-character display)
+- Sequential message flow with automatic transitions
+- Responsive design for kiosk displays
+- Yes/No buttons appear after final message
 
 ### Additional Kiosk Option
 - **[Call a staff member]** button → triggers a notification on the staff dashboard
@@ -64,17 +73,18 @@ Camera detects party of N approaching
 
 - **[app/](app/)** — Next.js App Router. Contains:
   - [app/page.tsx](app/page.tsx) — Public marketing/landing page
-  - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth)
+  - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth); redirects to `/admin/entry` on success
   - [app/logout/page.tsx](app/logout/page.tsx) — Logout route; signs out and redirects to `/login`
   - [app/admin/](app/admin/) — Kiosk-facing guest-interaction interface and admin routes (protected by `proxy.ts`):
     - [app/admin/layout.tsx](app/admin/layout.tsx) — Admin layout wrapper
     - [app/admin/page.tsx](app/admin/page.tsx) — Admin home/dashboard
     - [app/admin/customer/](app/admin/customer/) — Kiosk-facing guest flow:
-      - [app/admin/customer/welcome-page/page.tsx](app/admin/customer/welcome-page/page.tsx) — Kiosk greeting screen; displays party size detected by YOLO and asks about reservation
+        - [app/admin/customer/welcome-page/page.tsx](app/admin/customer/welcome-page/page.tsx) — Kiosk greeting screen; displays party size detected by YOLO and asks about reservation
+      - [app/admin/customer/welcome-page/KioskFrontCamera.tsx](app/admin/customer/welcome-page/KioskFrontCamera.tsx) — Client component that accesses the device camera, captures frames every 300ms, POSTs base64 JPEG to `vision/server.py` at `http://localhost:8000/detect`, and renders the annotated frame with a people-count overlay. Exposes `onPartySizeChange?: (count: number) => void` prop to pass live party size up to the welcome page.
       - [app/admin/customer/confirm-reservation/page.tsx](app/admin/customer/confirm-reservation/page.tsx) — Displays confirmed reservation details and assigned table
       - [app/admin/customer/table-free/page.tsx](app/admin/customer/table-free/page.tsx) — Displays available table and seating instructions for walk-in guests
       - [app/admin/customer/all-full/page.tsx](app/admin/customer/all-full/page.tsx) — Prompted when all tables are full; guest enters email to join waitlist
-    - [app/admin/test-route/page.tsx](app/admin/test-route/page.tsx) — Test/debug route
+    - [app/admin/entry/page.tsx](app/admin/entry/page.tsx) — Post-login landing page; animated typing sequence ("Welcome, Restaurant X." → "How would you like to proceed?") followed by two buttons: **Customer View** → `/admin/customer/welcome-page` and **Business View** → `/admin/business/dashboard`
 - **[lib/](lib/)** — Shared service clients:
   - [lib/supabase.ts](lib/supabase.ts) — Server-side Supabase client (`SUPABASE_URL` + `SUPABASE_SECRET_KEY`); bypasses RLS; use in API routes and server actions only
   - [lib/supabase-browser.ts](lib/supabase-browser.ts) — Browser-side Supabase client (`NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY`); uses `@supabase/ssr` `createBrowserClient`; stores session in cookies for proxy access
@@ -82,11 +92,87 @@ Camera detects party of N approaching
   - [lib/utils.ts](lib/utils.ts) — `cn` helper for Tailwind class merging
 - **[proxy.ts](proxy.ts)** — Next.js 16 proxy (replaces `middleware.ts`); protects all `/admin/*` routes; redirects unauthenticated users to `/login`
 - **[tests/](tests/)** — Connectivity tests for Supabase and Resend
+- **[vision/](vision/)** — Python vision microservice (see full breakdown below)
 
 ### Supabase Schema (expected)
 - `tables` — staff-configured table zones: `id`, `name`, `capacity`, `status` (`free`/`occupied`/`reserved`), `seated_at` (timestamp for dwell tracking)
 - `reservations` — `id`, `guest_name`, `party_size`, `reserved_for` (timestamp), `table_id`, `status`
 - `waitlist` — `id`, `guest_name`, `party_size`, `email`, `joined_at`, `notified_at`
+
+---
+
+## Vision Microservice (`vision/`)
+
+A self-contained Python package for real-time person detection, tracking, and table occupancy inference.
+
+### Two modes
+
+1. **FastAPI server (`vision/server.py`)** — HTTP endpoint consumed by the Next.js kiosk frontend. Start with:
+   ```bash
+   uvicorn vision.server:app --port 8000 --reload
+   ```
+   - `POST /detect` — accepts `{ image: "<base64 JPEG>" }`, returns `{ count: int, annotated_frame: "<base64 JPEG>" }`
+   - `GET /health` — returns `{ status: "ok" }`
+   - CORS open to all origins (kiosk browser calls it directly)
+   - Model: `yolov8n.pt` loaded from `vision/models/`
+
+2. **Standalone CLI pipeline (`vision/main.py`)** — Offline processing / demo mode. Run from repo root:
+   ```bash
+   # Webcam
+   vision/.venv/bin/python vision/main.py --config vision/config/sample_restaurant.yaml --source 0
+   # Video file
+   vision/.venv/bin/python vision/main.py --config vision/config/sample_restaurant.yaml --source test_footage/footage.mp4
+   ```
+   CLI flags: `--no-display`, `--save-video <path>`, `--json-dir <dir>`, `--json-every <n>`, `--max-frames <n>`
+
+### Setup
+```bash
+python3 -m venv vision/.venv
+source vision/.venv/bin/activate
+pip install -r vision/requirements.txt
+```
+Dependencies: `ultralytics`, `opencv-python`, `numpy`, `PyYAML`, `lapx`, `fastapi`, `uvicorn[standard]`
+
+### Module structure
+| Path | Purpose |
+|---|---|
+| `vision/server.py` | FastAPI `/detect` endpoint |
+| `vision/main.py` | CLI pipeline entrypoint |
+| `vision/config/sample_restaurant.yaml` | Default table layout, zones, and tuning thresholds |
+| `vision/models/yolov8n.pt` | Bundled YOLO model |
+| `vision/detectors/yolo_detector.py` | YOLOv8 + ByteTrack wrapper |
+| `vision/trackers/track_parser.py` | Normalises tracked detections |
+| `vision/zones/zone_manager.py` | Loads table & special-zone polygons/rects from config |
+| `vision/zones/geometry.py` | Polygon/rect helpers + anchor point calc |
+| `vision/state/track_registry.py` | Per-track memory, history, zone dwell time |
+| `vision/state/table_state_engine.py` | Table assignment + occupancy state transitions |
+| `vision/state/state_engine.py` | Assembles per-frame structured state dict |
+| `vision/state/types.py` | Shared type definitions |
+| `vision/utils/visualizer.py` | Debug overlays (bounding boxes, trails, zone labels) |
+| `vision/utils/state_writer.py` | Periodic JSON snapshots to disk |
+| `vision/utils/config_loader.py` | YAML/JSON config loader |
+| `vision/tools/polygon_picker.py` | Click-to-define table polygon helper |
+| `vision/tools/table_config_ui.py` | Live-feed drag-to-draw table config UI |
+
+### Per-frame state shape (CLI pipeline output)
+```json
+{
+  "frame_index": 42,
+  "timestamp": 1.4,
+  "tables": [{ "table_id": "T1", "capacity": 2, "state": "occupied", "party_size": 2, "assigned_track_ids": [3] }],
+  "tracks": [{ "track_id": 3, "bbox": [...], "anchor_point": [...], "current_zone": "T1", "zone_dwell_seconds": 4.2, "assigned_table_id": "T1" }],
+  "occupancy_summary": { "total": 3, "occupied": 1, "free": 2 }
+}
+```
+
+### Config (`vision/config/sample_restaurant.yaml`)
+- Tables defined as `polygon` (list of `[x,y]` points) or `rect` (`[x1,y1,x2,y2]`)
+- Special zones: `entrance_zone`, `waiting_zone`, `exit_zone`, `staff_only_zone`
+- Key thresholds: `table_assignment_seconds`, `vacancy_timeout_seconds`, `reassignment_seconds`, `track_stale_seconds`
+
+### Tools
+- **Polygon picker** — `python vision/tools/polygon_picker.py --input <image_or_video> --output <json>`
+- **Table config UI** — `python vision/tools/table_config_ui.py --config <yaml> --source 0` (drag to draw tables on live feed, `s` to save)
 
 ---
 
@@ -161,8 +247,9 @@ npm run dev
 - Supabase (Postgres, Realtime WebSockets, Storage, Auth)
 - `@supabase/ssr` — cookie-based session management for Next.js proxy auth
 - Resend (waitlist-ready + reservation confirmation emails)
-- Python + YOLO (Ultralytics) — vision microservice; detects party size at entrance and table occupancy
-- WebRTC — iPhone camera-to-Python video transport
+- Python + YOLO (Ultralytics) + ByteTrack — vision microservice; detects party size and table occupancy
+- FastAPI + Uvicorn — serves `POST /detect` consumed by `KioskFrontCamera.tsx`; browser captures frames and POSTs base64 JPEG every 300ms
+- WebRTC — planned iPhone camera-to-Python transport (not yet wired; current kiosk uses browser `getUserMedia` → HTTP polling)
 
 ## Auth
 
