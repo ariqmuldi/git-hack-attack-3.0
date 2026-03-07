@@ -130,11 +130,12 @@ SUPABASE_SECRET_KEY=            # service_role secret key (server-side only, nev
 NEXT_PUBLIC_SUPABASE_URL=       # Same value as SUPABASE_URL (browser-safe)
 NEXT_PUBLIC_SUPABASE_ANON_KEY=  # anon/public key (browser-safe)
 RESEND_API_KEY=
+RESEND_TEST_EMAIL=              # Your Resend account email — used by npm run test:resend
 ```
 
 **Getting credentials:**
 - **Supabase** — Create a project at [supabase.com](https://supabase.com). For `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`: click **Connect** in the top header → **API Keys** → copy the Project URL. For `SUPABASE_SECRET_KEY`: **Settings → API Keys → service_role**. For `NEXT_PUBLIC_SUPABASE_ANON_KEY`: **Settings → API Keys → anon/public**.
-- **Resend** — Go to [resend.com](https://resend.com), navigate to API Keys → Create API Key. Copy the key as `RESEND_API_KEY`.
+- **Resend** — Go to [resend.com](https://resend.com), navigate to API Keys → Create API Key. Copy the key as `RESEND_API_KEY`. Set `RESEND_TEST_EMAIL` to the email address associated with your Resend account (required for the sandbox `onboarding@resend.dev` sender to work).
 
 ### 3. Verify connections
 ```bash

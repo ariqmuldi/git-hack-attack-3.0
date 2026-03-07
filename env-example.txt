@@ -3,3 +3,4 @@ SUPABASE_SECRET_KEY=
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 RESEND_API_KEY=
+RESEND_TEST_EMAIL=   # Your Resend account email — used by npm run test:resend
