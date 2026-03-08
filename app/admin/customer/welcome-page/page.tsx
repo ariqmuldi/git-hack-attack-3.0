@@ -12,6 +12,7 @@ type KioskState =
   | "greeting"
   | "ask_party_size"
   | "ask_reservation"
+  | "collect_reservation_email"
   | "collect_email"
   | "confirm_email"
   | "routing";
@@ -98,7 +99,7 @@ export default function WelcomePage() {
       try {
         const response = await sendMessage(finalTranscript, {
           detectedPartySize: partySize,
-          currentState: kioskState as "greeting" | "ask_party_size" | "ask_reservation" | "collect_email" | "confirm_email",
+          currentState: kioskState as "greeting" | "ask_party_size" | "ask_reservation" | "collect_reservation_email" | "collect_email" | "confirm_email",
           collectedEmail: collectedEmail || undefined,
         });
         handleGeminiResponseRef.current(response.intent, response.reply, response.partySize, response.email);
@@ -225,20 +226,20 @@ export default function WelcomePage() {
 
         case "ask_reservation":
           if (intent === "has_reservation") {
-            setKioskState("routing");
+            // Ask for email to look up reservation
+            setKioskState("collect_reservation_email");
             addAIMessage(reply);
-            setUIState("speaking");
-            speak(reply, () => {
-              window.location.href = "/admin/customer/confirm-reservation";
-            });
+            speakAndListen(reply);
           } else if (intent === "no_reservation") {
             const tableAvailable = Math.random() < 0.5; // TBD: real YOLO data
             if (tableAvailable) {
+              // Table is free — announce and reset for next guest
               setKioskState("routing");
-              addAIMessage(reply);
+              const tableMsg = "Great news! Table 7 is ready for you. Please proceed to your table — a team member will be with you shortly.";
+              addAIMessage(tableMsg);
               setUIState("speaking");
-              speak(reply, () => {
-                window.location.href = "/admin/customer/table-free";
+              speak(tableMsg, () => {
+                setTimeout(() => resetAndGreet(), 10000);
               });
             } else {
               // All tables full — collect email for waitlist on this page
@@ -247,6 +248,19 @@ export default function WelcomePage() {
               addAIMessage(fullMsg);
               speakAndListen(fullMsg);
             }
+          }
+          break;
+
+        case "collect_reservation_email":
+          if (intent === "provide_email" && newEmail) {
+            // TBD: real reservation lookup — for now always confirm
+            setKioskState("routing");
+            const confirmedMsg = `Got it — ${newEmail}. Your reservation has been confirmed! Please proceed to your table — a team member will be with you shortly.`;
+            addAIMessage(confirmedMsg);
+            setUIState("speaking");
+            speak(confirmedMsg, () => {
+              setTimeout(() => resetAndGreet(), 10000);
+            });
           }
           break;
 
@@ -349,7 +363,7 @@ export default function WelcomePage() {
       try {
         const response = await sendMessage(chipText, {
           detectedPartySize: partySize,
-          currentState: kioskState as "greeting" | "ask_party_size" | "ask_reservation" | "collect_email" | "confirm_email",
+          currentState: kioskState as "greeting" | "ask_party_size" | "ask_reservation" | "collect_reservation_email" | "collect_email" | "confirm_email",
           collectedEmail: collectedEmail || undefined,
         });
         handleGeminiResponseRef.current(response.intent, response.reply, response.partySize, response.email);

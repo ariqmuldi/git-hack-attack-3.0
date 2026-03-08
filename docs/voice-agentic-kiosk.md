@@ -20,14 +20,29 @@ Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
        │   Kiosk speaks: "Do you have a reservation with us today?"
        │       │
        │       ├─ User says YES
-       │       │       └─ Navigate → /admin/customer/table-free
+       │       │       │
+       │       │       ▼
+       │       │   Kiosk speaks: "Perfect! What email address is your reservation under?"
+       │       │       │
+       │       │       ▼
+       │       │   [Live voice transcription]
+       │       │   Gemini normalises email (e.g. "john at gmail dot com" → "john@gmail.com")
+       │       │       │
+       │       │       ▼
+       │       │   TBD: cross-reference reservation in Supabase — for now always confirms
+       │       │       │
+       │       │       └─ Kiosk speaks: "Got it — john@gmail.com. Your reservation has been
+       │       │          confirmed! Please proceed to your table — a team member will be
+       │       │          with you shortly." → 10s pause → reset for next guest
        │       │
        │       └─ User says NO
        │               │
        │               ▼
        │          Check table availability (TBD: real YOLO data; currently 50/50 random)
        │               │
-       │               ├─ Space available → Navigate → /admin/customer/table-free
+       │               ├─ Space available → Kiosk speaks: "Great news! Table 7 is ready for you.
+       │               │                   Please proceed to your table — a team member will be
+       │               │                   with you shortly." → 10s pause → reset for next guest
        │               │
        │               └─ All full → STAY on welcome page
        │                                │
