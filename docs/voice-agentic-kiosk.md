@@ -22,18 +22,19 @@ Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
        │       ├─ User says YES
        │       │       │
        │       │       ▼
-       │       │   Kiosk speaks: "Perfect! What email address is your reservation under?"
+       │       │   Kiosk speaks: "Got it, what's the code for your reservation?"
        │       │       │
        │       │       ▼
        │       │   [Live voice transcription]
-       │       │   Gemini normalises email (e.g. "john at gmail dot com" → "john@gmail.com")
+       │       │   Gemini extracts & zero-pads code (e.g. "zero four two" → "042", "seventy two" → "072")
+       │       │   Code is a random number from 001 to 099
        │       │       │
        │       │       ▼
        │       │   TBD: cross-reference reservation in Supabase — for now always confirms
        │       │       │
-       │       │       └─ Kiosk speaks: "Got it — john@gmail.com. Your reservation has been
-       │       │          confirmed! Please proceed to your table — a team member will be
-       │       │          with you shortly." → 10s pause → reset for next guest
+       │       │       └─ Kiosk speaks: "Got it! Your reservation has been confirmed.
+       │       │          Please proceed to table [random 1–9]."
+       │       │          → 10s pause → reset for next guest
        │       │
        │       └─ User says NO
        │               │
@@ -102,9 +103,11 @@ Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
 - System prompt encodes the kiosk state machine so Gemini always responds with a structured JSON:
   ```json
   {
-    "reply": "Great! Do you have a reservation?",
-    "intent": "confirm_party_size" | "deny_party_size" | "has_reservation" | "no_reservation" | "provide_party_size",
-    "partySize": 4
+    "reply": "Got it, what's the code for your reservation?",
+    "intent": "confirm_party_size" | "deny_party_size" | "provide_party_size" | "has_reservation" | "no_reservation" | "provide_reservation_code" | "provide_email" | "email_confirmed" | "email_denied" | "unclear",
+    "partySize": 4,
+    "email": null,
+    "reservationCode": "042"
   }
   ```
 
@@ -117,7 +120,10 @@ Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
 | `greeting` | "Welcome! We detected a party of N. Is that correct?" | yes / no |
 | `ask_party_size` | "How many people are in your party?" | number utterance |
 | `ask_reservation` | "Do you have a reservation?" | yes / no |
-| `routing` | (silent, navigates) | — |
+| `collect_reservation_code` | "Got it, what's the code for your reservation?" | 3-digit number (001–099) |
+| `collect_email` | "Please say your email address…" | spoken email |
+| `confirm_email` | "Got it — [email]. Is that correct?" | yes / no |
+| `routing` | (terminal, speaks confirmation) | — |
 
 - Shows **live transcript** on screen as a subtle caption below the main message
 - Microphone icon pulses when actively listening
@@ -153,20 +159,22 @@ Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
 
 ```
 STATES:
-  greeting         → initial state; kiosk announces detected party size
-  ask_party_size   → user denied party size; kiosk asks for correct count
-  ask_reservation  → party size confirmed; kiosk asks about reservation
-  routing          → terminal state; navigate to correct page
+  greeting                  → initial state; kiosk announces detected party size
+  ask_party_size            → user denied party size; kiosk asks for correct count
+  ask_reservation           → party size confirmed; kiosk asks about reservation
+  collect_reservation_code  → user has reservation; kiosk asks for 3-digit code (001–099)
+  routing                   → terminal state; navigate to correct page
 
 TRANSITIONS:
-  greeting + intent=confirm_party_size  → ask_reservation
-  greeting + intent=deny_party_size     → ask_party_size
-  ask_party_size + intent=provide_party_size → ask_reservation (update partySize)
-  ask_reservation + intent=has_reservation   → navigate(/confirm-reservation)
-  ask_reservation + intent=no_reservation    → checkAvailability()
+  greeting + intent=confirm_party_size             → ask_reservation
+  greeting + intent=deny_party_size                → ask_party_size
+  ask_party_size + intent=provide_party_size        → ask_reservation (update partySize)
+  ask_reservation + intent=has_reservation          → collect_reservation_code
+  collect_reservation_code + intent=provide_reservation_code → routing (confirm reservation)
+  ask_reservation + intent=no_reservation           → checkAvailability()
     checkAvailability:
-      tableAvailable=true  → navigate(/table-free)
-      tableAvailable=false → navigate(/all-full)
+      tableAvailable=true  → routing (announce table)
+      tableAvailable=false → collect_email → confirm_email → waitlist
 ```
 
 ---
