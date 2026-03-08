@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  BarChart3,
   Camera,
+  Clock3,
   Loader2,
   Pencil,
   Plus,
   Save,
+  TrendingUp,
   Trash2,
   Users,
   Wifi,
@@ -85,6 +88,11 @@ interface DetectionSnapshot {
   frameHeight: number;
 }
 
+interface TrafficSample {
+  timestamp: number;
+  totalPeople: number;
+}
+
 interface ZoneEditorProps {
   stream: MediaStream | null;
   streamUrl?: string | null;
@@ -125,6 +133,20 @@ const ZONE_COLORS = [
 
 const ZONES = ["All", "Entrance", "Dining"] as const;
 type Zone = (typeof ZONES)[number];
+
+const USE_FAKE_ANALYTICS = true;
+
+const MOCK_HOURLY_OCCUPANCY = [
+  4, 3, 2, 2, 3, 6, 10, 14, 18, 21, 25, 29,
+  34, 31, 28, 24, 22, 26, 33, 36, 30, 20, 12, 7,
+];
+
+const MOCK_ZONE_DISTRIBUTION = [
+  { zone: "Entrance", count: 34, queueMinutes: 8 },
+  { zone: "Dining", count: 49, queueMinutes: 14 },
+  { zone: "Bar", count: 23, queueMinutes: 9 },
+  { zone: "Patio", count: 18, queueMinutes: 6 },
+];
 
 const STATUS_BADGE: Record<CameraStatus, string> = {
   online: "bg-emerald-500",
@@ -995,6 +1017,7 @@ function CameraTile({
 }
 
 export default function BusinessDashboardPage() {
+  const [activeView, setActiveView] = useState<"cameras" | "analytics">("cameras");
   const [activeZone, setActiveZone] = useState<Zone>("All");
   const [cameraStreams, setCameraStreams] = useState<Record<string, MediaStream | null>>({
     [ENTRANCE_CAMERA_ID]: null,
@@ -1039,6 +1062,26 @@ export default function BusinessDashboardPage() {
     [FLOOR_CAMERA_ID]: 0,
   });
   const [timestamp, setTimestamp] = useState(now());
+  const [trafficSamples, setTrafficSamples] = useState<TrafficSample[]>(() => {
+    if (typeof window === "undefined") return [];
+    const saved = localStorage.getItem("traffic-samples-v1");
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved) as TrafficSample[];
+      if (!Array.isArray(parsed)) return [];
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      return parsed
+        .filter(
+          (sample) =>
+            sample &&
+            typeof sample.timestamp === "number" &&
+            typeof sample.totalPeople === "number"
+        )
+        .filter((sample) => sample.timestamp >= oneDayAgo);
+    } catch {
+      return [];
+    }
+  });
   const [zoneEditorOpen, setZoneEditorOpen] = useState(false);
   const [zones, setZones] = useState<TableZone[]>([]);
   const [peopleAtTableById, setPeopleAtTableById] = useState<Record<string, number>>({});
@@ -1824,6 +1867,194 @@ export default function BusinessDashboardPage() {
   }, [filteredCameras, activeZone]);
 
   const onlineCount = cameraData.filter((c) => c.status === "online").length;
+  const totalPeopleNow = useMemo(
+    () => cameraData.reduce((acc, cam) => acc + cam.peopleCount, 0),
+    [cameraData]
+  );
+
+  useEffect(() => {
+    const addSample = () => {
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      setTrafficSamples((prev) => {
+        const next = [...prev, { timestamp: Date.now(), totalPeople: totalPeopleNow }].filter(
+          (sample) => sample.timestamp >= oneDayAgo
+        );
+        localStorage.setItem("traffic-samples-v1", JSON.stringify(next));
+        return next;
+      });
+    };
+
+    addSample();
+    const interval = setInterval(addSample, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [totalPeopleNow]);
+
+  const zonePeopleNow = useMemo(() => {
+    if (USE_FAKE_ANALYTICS) {
+      return MOCK_ZONE_DISTRIBUTION.reduce<Record<string, number>>((acc, item) => {
+        acc[item.zone] = item.count;
+        return acc;
+      }, {});
+    }
+    const next: Record<string, number> = {};
+    for (const cam of cameraData) {
+      next[cam.zone] = (next[cam.zone] ?? 0) + cam.peopleCount;
+    }
+    return next;
+  }, [cameraData]);
+
+  const busiestZone = useMemo(() => {
+    const entries = Object.entries(zonePeopleNow);
+    if (entries.length === 0) return "N/A";
+    return entries.sort((a, b) => b[1] - a[1])[0][0];
+  }, [zonePeopleNow]);
+
+  const hourlyOccupancy = useMemo(() => {
+    if (USE_FAKE_ANALYTICS) {
+      return MOCK_HOURLY_OCCUPANCY.map((avg, hour) => ({
+        hour,
+        total: avg,
+        samples: 1,
+        avg,
+        label: `${String(hour).padStart(2, "0")}:00`,
+      }));
+    }
+    const buckets = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      total: 0,
+      samples: 0,
+      avg: 0,
+      label: `${String(hour).padStart(2, "0")}:00`,
+    }));
+
+    for (const sample of trafficSamples) {
+      const hour = new Date(sample.timestamp).getHours();
+      buckets[hour].total += sample.totalPeople;
+      buckets[hour].samples += 1;
+    }
+
+    return buckets.map((bucket) => ({
+      ...bucket,
+      avg: bucket.samples > 0 ? Math.round(bucket.total / bucket.samples) : 0,
+    }));
+  }, [trafficSamples]);
+
+  const peakHour = useMemo(() => {
+    const busiest = [...hourlyOccupancy].sort((a, b) => b.avg - a.avg)[0];
+    return busiest?.avg ? busiest.label : "Not enough data";
+  }, [hourlyOccupancy]);
+
+  const estimatedVisitorsToday = useMemo(() => {
+    if (USE_FAKE_ANALYTICS) return 286;
+    if (trafficSamples.length < 2) return totalPeopleNow;
+    const ordered = [...trafficSamples].sort((a, b) => a.timestamp - b.timestamp);
+    let totalInflow = 0;
+    for (let i = 1; i < ordered.length; i += 1) {
+      const delta = ordered[i].totalPeople - ordered[i - 1].totalPeople;
+      if (delta > 0) totalInflow += delta;
+    }
+    return totalInflow;
+  }, [trafficSamples, totalPeopleNow]);
+
+  const highestHourlyLoad = useMemo(
+    () => hourlyOccupancy.reduce((max, hour) => Math.max(max, hour.avg), 0),
+    [hourlyOccupancy]
+  );
+
+  const trendChart = useMemo(() => {
+    const width = 720;
+    const height = 220;
+    const left = 24;
+    const right = width - 24;
+    const top = 16;
+    const bottom = height - 28;
+    const maxY = Math.max(highestHourlyLoad, 1);
+    const stepX = (right - left) / Math.max(hourlyOccupancy.length - 1, 1);
+
+    const points = hourlyOccupancy.map((entry, index) => {
+      const x = left + index * stepX;
+      const y = bottom - (entry.avg / maxY) * (bottom - top);
+      return { ...entry, x, y };
+    });
+
+    const linePath = points
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+      .join(" ");
+    const areaPath = `${linePath} L ${right} ${bottom} L ${left} ${bottom} Z`;
+
+    return { width, height, left, right, top, bottom, points, linePath, areaPath };
+  }, [hourlyOccupancy, highestHourlyLoad]);
+
+  const zoneDistribution = useMemo(
+    () =>
+      USE_FAKE_ANALYTICS
+        ? MOCK_ZONE_DISTRIBUTION.map((item) => ({ zone: item.zone, count: item.count }))
+        : Object.entries(zonePeopleNow)
+            .map(([zone, count]) => ({ zone, count }))
+            .sort((a, b) => b.count - a.count),
+    [zonePeopleNow]
+  );
+
+  const totalZonePeople = useMemo(
+    () => zoneDistribution.reduce((sum, item) => sum + item.count, 0),
+    [zoneDistribution]
+  );
+
+  const analyticsLiveOccupancy = USE_FAKE_ANALYTICS ? totalZonePeople : totalPeopleNow;
+
+  const zoneCameraCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const cam of cameraData) {
+      counts[cam.zone] = (counts[cam.zone] ?? 0) + 1;
+    }
+    return counts;
+  }, [cameraData]);
+
+  const queueByZone = useMemo(
+    () => {
+      if (USE_FAKE_ANALYTICS) {
+        return MOCK_ZONE_DISTRIBUTION.map((item) => ({
+          zone: item.zone,
+          count: item.count,
+          queueMinutes: item.queueMinutes,
+          queueLevel: item.queueMinutes >= 12 ? "High" : item.queueMinutes >= 7 ? "Medium" : "Low",
+        }));
+      }
+      return zoneDistribution.map((item) => {
+        const cameras = zoneCameraCounts[item.zone] ?? 1;
+        const queueMinutes = Math.max(1, Math.round((item.count * 2.8) / cameras));
+        const queueLevel = queueMinutes >= 12 ? "High" : queueMinutes >= 7 ? "Medium" : "Low";
+        return { ...item, queueMinutes, queueLevel };
+      });
+    },
+    [zoneDistribution, zoneCameraCounts]
+  );
+
+  const maxQueueMinutes = useMemo(
+    () => queueByZone.reduce((max, item) => Math.max(max, item.queueMinutes), 0),
+    [queueByZone]
+  );
+
+  const donutSegments = useMemo(() => {
+    if (totalZonePeople === 0) return [];
+    const radius = 52;
+    const circumference = 2 * Math.PI * radius;
+    const palette = ["#111827", "#374151", "#6B7280", "#9CA3AF", "#D1D5DB"];
+    let offset = 0;
+    return zoneDistribution.slice(0, 5).map((item, index) => {
+      const ratio = item.count / totalZonePeople;
+      const length = ratio * circumference;
+      const segment = {
+        ...item,
+        stroke: palette[index % palette.length],
+        dasharray: `${length} ${circumference - length}`,
+        dashoffset: -offset,
+        percent: Math.round(ratio * 100),
+      };
+      offset += length;
+      return segment;
+    });
+  }, [totalZonePeople, zoneDistribution]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-zinc-100 via-zinc-50 to-white font-sans text-zinc-900 antialiased">
@@ -1868,265 +2099,446 @@ export default function BusinessDashboardPage() {
           </div>
         </header>
 
-        <nav className="mt-6 flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm">
-          {ZONES.map((zone) => (
-            <button
-              key={zone}
-              type="button"
-              onClick={() => setActiveZone(zone)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                activeZone === zone
-                  ? "bg-black text-white shadow-sm"
-                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
-              }`}
-            >
-              {zone}
-            </button>
-          ))}
-
-          <div className="ml-auto flex items-center gap-2">
-            <div className="hidden rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[11px] text-zinc-600 md:block">
-              Entrance: {entranceDeviceLabel}
-            </div>
-            <div className="hidden rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[11px] text-zinc-600 md:block">
-              Dining: {useVisionBridgeForDining ? `Vision source ${diningSourceIndex}` : diningDeviceLabel}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-xl text-xs"
-              onClick={() => setZoneEditorOpen(true)}
-            >
-              Configure Floor Tables
-            </Button>
-          </div>
+        <nav className="mt-6 flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setActiveView("cameras")}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+              activeView === "cameras" ? "bg-black text-white shadow-sm" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+            }`}
+          >
+            Cameras
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView("analytics")}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+              activeView === "analytics" ? "bg-black text-white shadow-sm" : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+            }`}
+          >
+            Analytics
+          </button>
         </nav>
 
-        {videoInputs.length > 0 && (
-          <section className="mt-4 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-400">
-              Camera Assignment
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => refreshVideoInputs(false)}
-                className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[11px] font-medium text-zinc-700 transition hover:bg-zinc-100"
-              >
-                Refresh Camera List
-              </button>
-              <button
-                type="button"
-                onClick={() => setUseVisionBridgeForDining((prev) => !prev)}
-                className={`rounded-lg border px-3 py-1.5 text-[11px] font-medium transition ${
-                  useVisionBridgeForDining
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                    : "border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100"
-                }`}
-              >
-                {useVisionBridgeForDining ? "Dining via Vision Bridge: ON" : "Dining via Vision Bridge: OFF"}
-              </button>
-              {useVisionBridgeForDining && (
-                <>
-                  <label className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1">
-                    <span className="text-[11px] text-zinc-600">Dining source index</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={8}
-                      value={diningSourceIndex}
-                      onChange={(e) => setDiningSourceIndex(Math.max(0, Number(e.target.value) || 0))}
-                      className="w-12 rounded border border-zinc-300 px-1 py-0.5 text-xs text-zinc-800 outline-none focus:border-zinc-500"
-                    />
-                  </label>
+        {activeView === "cameras" && (
+          <>
+            <nav className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm">
+              {ZONES.map((zone) => (
+                <button
+                  key={zone}
+                  type="button"
+                  onClick={() => setActiveZone(zone)}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                    activeZone === zone
+                      ? "bg-black text-white shadow-sm"
+                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                  }`}
+                >
+                  {zone}
+                </button>
+              ))}
+
+              <div className="ml-auto flex items-center gap-2">
+                <div className="hidden rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[11px] text-zinc-600 md:block">
+                  Entrance: {entranceDeviceLabel}
+                </div>
+                <div className="hidden rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[11px] text-zinc-600 md:block">
+                  Dining: {useVisionBridgeForDining ? `Vision source ${diningSourceIndex}` : diningDeviceLabel}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-xl text-xs"
+                  onClick={() => setZoneEditorOpen(true)}
+                >
+                  Configure Floor Tables
+                </Button>
+              </div>
+            </nav>
+
+            {videoInputs.length > 0 && (
+              <section className="mt-4 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-400">
+                  Camera Assignment
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={startVisionBridgeCameras}
+                    onClick={() => refreshVideoInputs(false)}
                     className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[11px] font-medium text-zinc-700 transition hover:bg-zinc-100"
                   >
-                    Restart Vision Bridge
+                    Refresh Camera List
                   </button>
-                </>
-              )}
-              {!hasIphoneCameraOption && (
-                <span className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-medium text-amber-700">
-                  iPhone/Continuity camera not detected yet.
-                </span>
-              )}
-              {selectedDeviceIds.entrance === selectedDeviceIds.dining && videoInputs.length > 1 && (
-                <span className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-medium text-amber-700">
-                  Entrance and dining are set to the same device.
-                </span>
-              )}
-            </div>
-            <div className="mt-2 grid gap-2 md:grid-cols-2">
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium text-zinc-600">Entrance Camera (local)</span>
-                <select
-                  value={selectedDeviceIds.entrance}
-                  onChange={(e) =>
-                    setSelectedDeviceIds((prev) => {
-                      const entrance = e.target.value;
-                      if (entrance !== prev.dining || videoInputs.length <= 1) {
-                        return { ...prev, entrance };
-                      }
-                      const alt = videoInputs.find((device) => device.deviceId !== entrance);
-                      return { entrance, dining: alt?.deviceId ?? prev.dining };
-                    })
-                  }
-                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-400"
-                >
-                  {videoInputs.map((device, index) => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {cameraOptionLabel(device, index)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium text-zinc-600">Dining Camera (iPhone Continuity)</span>
-                <select
-                  value={selectedDeviceIds.dining}
-                  disabled={useVisionBridgeForDining}
-                  onChange={(e) =>
-                    setSelectedDeviceIds((prev) => {
-                      const dining = e.target.value;
-                      if (dining !== prev.entrance || videoInputs.length <= 1) {
-                        return { ...prev, dining };
-                      }
-                      const alt = videoInputs.find((device) => device.deviceId !== dining);
-                      return { entrance: alt?.deviceId ?? prev.entrance, dining };
-                    })
-                  }
-                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
-                >
-                  {videoInputs.map((device, index) => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {cameraOptionLabel(device, index)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </section>
-        )}
-
-        {cameraError && (
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {cameraError}
-          </div>
-        )}
-
-        {zoneLoadError && (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {zoneLoadError}
-          </div>
-        )}
-
-        <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-400">
-                Floor Occupancy
-              </p>
-              <p className="mt-1 text-sm font-medium text-zinc-700">{floorSummary}</p>
-            </div>
-            <Button
-              size="sm"
-              className="h-8 rounded-xl bg-black px-4 text-xs font-semibold text-white hover:bg-zinc-800"
-              onClick={() => setZoneEditorOpen(true)}
-            >
-              Manage Zones
-            </Button>
-          </div>
-
-          {zones.length > 0 && (
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {zones.map((zone) => {
-                const currentAtTable = peopleAtTableById[zone.id] ?? 0;
-                const isOccupied = zone.status === "occupied";
-                return (
-                  <div
-                    key={zone.id}
-                    className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2"
+                  <button
+                    type="button"
+                    onClick={() => setUseVisionBridgeForDining((prev) => !prev)}
+                    className={`rounded-lg border px-3 py-1.5 text-[11px] font-medium transition ${
+                      useVisionBridgeForDining
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100"
+                    }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-semibold text-zinc-800">{zone.name}</p>
-                      <span
-                        className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
-                          isOccupied
-                            ? "bg-red-100 text-red-700"
-                            : "bg-emerald-100 text-emerald-700"
-                        }`}
+                    {useVisionBridgeForDining ? "Dining via Vision Bridge: ON" : "Dining via Vision Bridge: OFF"}
+                  </button>
+                  {useVisionBridgeForDining && (
+                    <>
+                      <label className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1">
+                        <span className="text-[11px] text-zinc-600">Dining source index</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={8}
+                          value={diningSourceIndex}
+                          onChange={(e) => setDiningSourceIndex(Math.max(0, Number(e.target.value) || 0))}
+                          className="w-12 rounded border border-zinc-300 px-1 py-0.5 text-xs text-zinc-800 outline-none focus:border-zinc-500"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={startVisionBridgeCameras}
+                        className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[11px] font-medium text-zinc-700 transition hover:bg-zinc-100"
                       >
-                        {isOccupied ? "occupied" : "open"}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs font-medium text-zinc-700">
-                      {isOccupied
-                        ? `Table occupied, ${currentAtTable}/${zone.capacity}`
-                        : `Table open, ${currentAtTable}/${zone.capacity}`}
-                    </p>
-                    <p className="mt-0.5 text-xs text-zinc-500">
-                      Dwell: {currentAtTable > 0 && isOccupied ? formatDwell(zone.seated_at) : "00:00"}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                        Restart Vision Bridge
+                      </button>
+                    </>
+                  )}
+                  {!hasIphoneCameraOption && (
+                    <span className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-medium text-amber-700">
+                      iPhone/Continuity camera not detected yet.
+                    </span>
+                  )}
+                  {selectedDeviceIds.entrance === selectedDeviceIds.dining && videoInputs.length > 1 && (
+                    <span className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-medium text-amber-700">
+                      Entrance and dining are set to the same device.
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] font-medium text-zinc-600">Entrance Camera (local)</span>
+                    <select
+                      value={selectedDeviceIds.entrance}
+                      onChange={(e) =>
+                        setSelectedDeviceIds((prev) => {
+                          const entrance = e.target.value;
+                          if (entrance !== prev.dining || videoInputs.length <= 1) {
+                            return { ...prev, entrance };
+                          }
+                          const alt = videoInputs.find((device) => device.deviceId !== entrance);
+                          return { entrance, dining: alt?.deviceId ?? prev.dining };
+                        })
+                      }
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-400"
+                    >
+                      {videoInputs.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {cameraOptionLabel(device, index)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] font-medium text-zinc-600">Dining Camera (iPhone Continuity)</span>
+                    <select
+                      value={selectedDeviceIds.dining}
+                      disabled={useVisionBridgeForDining}
+                      onChange={(e) =>
+                        setSelectedDeviceIds((prev) => {
+                          const dining = e.target.value;
+                          if (dining !== prev.entrance || videoInputs.length <= 1) {
+                            return { ...prev, dining };
+                          }
+                          const alt = videoInputs.find((device) => device.deviceId !== dining);
+                          return { entrance: alt?.deviceId ?? prev.entrance, dining };
+                        })
+                      }
+                      className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+                    >
+                      {videoInputs.map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {cameraOptionLabel(device, index)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </section>
+            )}
 
-        <div className="mt-6 space-y-8">
-          {Object.entries(grouped).map(([zone, cameras]) => (
-            <section key={zone}>
-              <div className="mb-4 flex items-center gap-3">
-                <h2 className="text-base font-semibold text-zinc-900">{zone}</h2>
-                <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-medium text-zinc-500">
-                  {cameras.length} camera{cameras.length !== 1 ? "s" : ""}
-                </span>
-                <div className="flex-1 border-t border-zinc-200" />
+            {cameraError && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {cameraError}
+              </div>
+            )}
+
+            {zoneLoadError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {zoneLoadError}
+              </div>
+            )}
+
+            <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-400">
+                    Floor Occupancy
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-zinc-700">{floorSummary}</p>
+                </div>
+                <Button
+                  size="sm"
+                  className="h-8 rounded-xl bg-black px-4 text-xs font-semibold text-white hover:bg-zinc-800"
+                  onClick={() => setZoneEditorOpen(true)}
+                >
+                  Manage Zones
+                </Button>
               </div>
 
-              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                {cameras.map((cam) => (
-                  <CameraTile
-                    key={cam.id}
-                    camera={cam}
-                    stream={cam.stream}
-                    streamUrl={cam.streamUrl}
-                    status={cam.status}
-                    peopleCount={cam.peopleCount}
-                    fps={cam.fps}
-                    latencyMs={cam.latencyMs}
-                    visionConnected={cam.visionConnected}
-                    timestamp={timestamp}
-                    tableSummary={cam.id === FLOOR_CAMERA_ID ? floorSummary : undefined}
-                    tableZones={cam.id === FLOOR_CAMERA_ID ? zones : undefined}
-                    peopleAtTableById={cam.id === FLOOR_CAMERA_ID ? peopleAtTableById : undefined}
-                    detectionSnapshot={
-                      cam.id === ENTRANCE_CAMERA_ID
-                        ? detectionSnapshotByCamera[ENTRANCE_CAMERA_ID]
-                        : undefined
-                    }
-                    onOpenView={cam.id === FLOOR_CAMERA_ID ? () => setZoneEditorOpen(true) : undefined}
-                    onConfigureTables={
-                      cam.id === FLOOR_CAMERA_ID
-                        ? () => setZoneEditorOpen(true)
-                        : undefined
-                    }
-                  />
-                ))}
-              </div>
+              {zones.length > 0 && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {zones.map((zone) => {
+                    const currentAtTable = peopleAtTableById[zone.id] ?? 0;
+                    const isOccupied = zone.status === "occupied";
+                    return (
+                      <div
+                        key={zone.id}
+                        className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="truncate text-sm font-semibold text-zinc-800">{zone.name}</p>
+                          <span
+                            className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                              isOccupied
+                                ? "bg-red-100 text-red-700"
+                                : "bg-emerald-100 text-emerald-700"
+                            }`}
+                          >
+                            {isOccupied ? "occupied" : "open"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs font-medium text-zinc-700">
+                          {isOccupied
+                            ? `Table occupied, ${currentAtTable}/${zone.capacity}`
+                            : `Table open, ${currentAtTable}/${zone.capacity}`}
+                        </p>
+                        <p className="mt-0.5 text-xs text-zinc-500">
+                          Dwell: {currentAtTable > 0 && isOccupied ? formatDwell(zone.seated_at) : "00:00"}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </section>
-          ))}
-        </div>
 
-        {filteredCameras.length === 0 && (
-          <div className="mt-12 flex flex-col items-center gap-3 text-zinc-400">
-            <Camera className="size-12" />
-            <p className="text-sm font-medium">No cameras in this zone</p>
-          </div>
+            <div className="mt-6 space-y-8">
+              {Object.entries(grouped).map(([zone, cameras]) => (
+                <section key={zone}>
+                  <div className="mb-4 flex items-center gap-3">
+                    <h2 className="text-base font-semibold text-zinc-900">{zone}</h2>
+                    <span className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-medium text-zinc-500">
+                      {cameras.length} camera{cameras.length !== 1 ? "s" : ""}
+                    </span>
+                    <div className="flex-1 border-t border-zinc-200" />
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                    {cameras.map((cam) => (
+                      <CameraTile
+                        key={cam.id}
+                        camera={cam}
+                        stream={cam.stream}
+                        streamUrl={cam.streamUrl}
+                        status={cam.status}
+                        peopleCount={cam.peopleCount}
+                        fps={cam.fps}
+                        latencyMs={cam.latencyMs}
+                        visionConnected={cam.visionConnected}
+                        timestamp={timestamp}
+                        tableSummary={cam.id === FLOOR_CAMERA_ID ? floorSummary : undefined}
+                        tableZones={cam.id === FLOOR_CAMERA_ID ? zones : undefined}
+                        peopleAtTableById={cam.id === FLOOR_CAMERA_ID ? peopleAtTableById : undefined}
+                        detectionSnapshot={
+                          cam.id === ENTRANCE_CAMERA_ID
+                            ? detectionSnapshotByCamera[ENTRANCE_CAMERA_ID]
+                            : undefined
+                        }
+                        onOpenView={cam.id === FLOOR_CAMERA_ID ? () => setZoneEditorOpen(true) : undefined}
+                        onConfigureTables={
+                          cam.id === FLOOR_CAMERA_ID
+                            ? () => setZoneEditorOpen(true)
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+
+            {filteredCameras.length === 0 && (
+              <div className="mt-12 flex flex-col items-center gap-3 text-zinc-400">
+                <Camera className="size-12" />
+                <p className="text-sm font-medium">No cameras in this zone</p>
+              </div>
+            )}
+          </>
+        )}
+
+        {activeView === "analytics" && (
+          <section className="mt-4 flex flex-col gap-6">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Estimated visitors (24h)</p>
+                <p className="mt-2 flex items-center gap-2 text-2xl font-semibold text-zinc-900">
+                  <Users className="size-5 text-zinc-500" />
+                  {estimatedVisitorsToday}
+                </p>
+              </article>
+              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Peak hour</p>
+                <p className="mt-2 flex items-center gap-2 text-2xl font-semibold text-zinc-900">
+                  <Clock3 className="size-5 text-zinc-500" />
+                  {peakHour}
+                </p>
+              </article>
+              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Live occupancy</p>
+                <p className="mt-2 flex items-center gap-2 text-2xl font-semibold text-zinc-900">
+                  <BarChart3 className="size-5 text-zinc-500" />
+                  {analyticsLiveOccupancy}
+                </p>
+              </article>
+              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Busiest zone now</p>
+                <p className="mt-2 flex items-center gap-2 text-2xl font-semibold text-zinc-900">
+                  <TrendingUp className="size-5 text-zinc-500" />
+                  {busiestZone}
+                </p>
+              </article>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-3">
+              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm xl:col-span-2">
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <h2 className="text-base font-semibold text-zinc-900">Hourly occupancy trend</h2>
+                  <span className="text-xs text-zinc-500">Rolling 24h line graph</span>
+                </div>
+                <div className="rounded-xl border border-zinc-100 bg-zinc-50 p-3">
+                  <svg viewBox={`0 0 ${trendChart.width} ${trendChart.height}`} className="h-56 w-full">
+                    <line x1={trendChart.left} y1={trendChart.bottom} x2={trendChart.right} y2={trendChart.bottom} className="stroke-zinc-200" />
+                    <line x1={trendChart.left} y1={trendChart.top} x2={trendChart.left} y2={trendChart.bottom} className="stroke-zinc-200" />
+                    <path d={trendChart.areaPath} fill="rgba(24, 24, 27, 0.12)" />
+                    <path d={trendChart.linePath} fill="none" stroke="#18181B" strokeWidth="2.5" />
+                    {trendChart.points.filter((_, i) => i % 4 === 0).map((point) => (
+                      <text key={point.hour} x={point.x} y={trendChart.bottom + 14} textAnchor="middle" className="fill-zinc-500 text-[9px]">
+                        {point.label.slice(0, 2)}
+                      </text>
+                    ))}
+                  </svg>
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <h2 className="text-base font-semibold text-zinc-900">Zone share</h2>
+                  <span className="text-xs text-zinc-500">{USE_FAKE_ANALYTICS ? "Demo split" : "Live split"}</span>
+                </div>
+                <div className="flex items-center justify-center rounded-xl border border-zinc-100 bg-zinc-50 p-4">
+                  <div className="relative size-36">
+                    <svg viewBox="0 0 120 120" className="size-36 -rotate-90">
+                      <circle cx="60" cy="60" r="52" fill="none" stroke="#E4E4E7" strokeWidth="12" />
+                      {donutSegments.map((segment) => (
+                        <circle
+                          key={segment.zone}
+                          cx="60"
+                          cy="60"
+                          r="52"
+                          fill="none"
+                          stroke={segment.stroke}
+                          strokeWidth="12"
+                          strokeDasharray={segment.dasharray}
+                          strokeDashoffset={segment.dashoffset}
+                          strokeLinecap="butt"
+                        />
+                      ))}
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center text-center">
+                      <div>
+                        <p className="text-xl font-semibold text-zinc-900">{totalZonePeople}</p>
+                        <p className="text-[11px] text-zinc-500">people now</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-col gap-2">
+                  {donutSegments.map((segment) => (
+                    <div key={segment.zone} className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="size-2.5 rounded-full" style={{ backgroundColor: segment.stroke }} />
+                        <span className="font-medium text-zinc-700">{segment.zone}</span>
+                      </div>
+                      <span className="text-zinc-500">{segment.percent}%</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h2 className="text-base font-semibold text-zinc-900">Current load by zone</h2>
+                <span className="text-xs text-zinc-500">Horizontal bar graph</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                {zoneDistribution.length === 0 && (
+                  <p className="text-sm text-zinc-500">No occupancy data yet.</p>
+                )}
+                {zoneDistribution.map((zone) => {
+                  const width = totalZonePeople > 0 ? Math.max(4, Math.round((zone.count / totalZonePeople) * 100)) : 4;
+                  return (
+                    <div key={zone.zone} className="grid grid-cols-[120px_1fr_52px] items-center gap-3">
+                      <span className="text-xs font-medium text-zinc-600 truncate">{zone.zone}</span>
+                      <div className="h-2.5 rounded bg-zinc-100">
+                        <div className="h-2.5 rounded bg-zinc-800" style={{ width: `${width}%` }} />
+                      </div>
+                      <span className="text-right text-xs font-semibold text-zinc-700">{zone.count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h2 className="text-base font-semibold text-zinc-900">Queue time by zone</h2>
+                <span className="text-xs text-zinc-500">Estimated wait in minutes</span>
+              </div>
+              <div className="flex flex-col gap-3">
+                {queueByZone.length === 0 && (
+                  <p className="text-sm text-zinc-500">No queue data yet.</p>
+                )}
+                {queueByZone.map((zone) => {
+                  const width = maxQueueMinutes > 0 ? Math.max(6, Math.round((zone.queueMinutes / maxQueueMinutes) * 100)) : 6;
+                  return (
+                    <div key={zone.zone} className="grid grid-cols-[120px_1fr_86px_56px] items-center gap-3">
+                      <span className="text-xs font-medium text-zinc-600 truncate">{zone.zone}</span>
+                      <div className="h-2.5 rounded bg-zinc-100">
+                        <div className="h-2.5 rounded bg-zinc-700" style={{ width: `${width}%` }} />
+                      </div>
+                      <span className="text-right text-xs font-semibold text-zinc-800">{zone.queueMinutes} min</span>
+                      <span className="text-right text-[11px] font-medium text-zinc-500">{zone.queueLevel}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-[11px] text-zinc-500">
+                {USE_FAKE_ANALYTICS
+                  ? "Demo queue values for presentation mode."
+                  : "Computed from live occupancy density per zone and camera coverage. Replace with POS/host queue events for exact values."}
+              </p>
+            </article>
+          </section>
         )}
       </div>
 
