@@ -29,7 +29,11 @@ interface ChatMessage {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-const DEFAULT_PARTY_SIZE = 3;
+const DEFAULT_PARTY_SIZE = 2;
+const VISION_SERVER = process.env.NEXT_PUBLIC_VISION_SERVER ?? "http://localhost:8000";
+const DETECTION_WINDOW = 5; // readings before we consider the count stable
+const DETECTION_INTERVAL_MS = 300;
+const DETECTION_TIMEOUT_MS = 4000; // fall back after this if no stable reading
 
 export default function WelcomePage() {
   // Core state
@@ -48,6 +52,13 @@ export default function WelcomePage() {
   const handleGeminiResponseRef = useRef<
     (intent: GeminiIntent, reply: string, partySize: number | null, email: string | null) => void
   >(() => {});
+
+  // Party-size detection refs
+  const detectionVideoRef = useRef<HTMLVideoElement>(null);
+  const detectionCanvasRef = useRef<HTMLCanvasElement>(null);
+  const detectionStreamRef = useRef<MediaStream | null>(null);
+  const detectionReadingsRef = useRef<number[]>([]);
+  const detectionReadyRef = useRef(false);
 
   // Pre-computed bar heights to avoid Math.random in render
   const barHeights = useMemo(() => [18, 24, 14, 20, 16], []);
@@ -329,15 +340,126 @@ export default function WelcomePage() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // ─── Initial greeting ────────────────────────────────────────────────────
+  // ─── Party-size detection ─────────────────────────────────────────────────
 
+  // Runs once on mount: starts camera, polls vision server, fires greeting when
+  // a stable reading is available (or falls back after DETECTION_TIMEOUT_MS).
   useEffect(() => {
     if (hasStarted.current) return;
     hasStarted.current = true;
 
-    const greeting = `Welcome! We detected a party of ${partySize}. Is that correct?`;
-    addAIMessage(greeting);
-    speakAndListen(greeting);
+    const video = detectionVideoRef.current;
+    const canvas = detectionCanvasRef.current;
+
+    function fireGreeting(count: number) {
+      if (detectionReadyRef.current) return; // already fired
+      detectionReadyRef.current = true;
+
+      // Stop camera — no longer needed
+      detectionStreamRef.current?.getTracks().forEach((t) => t.stop());
+      detectionStreamRef.current = null;
+
+      const detected = count > 0 ? count : null;
+      if (detected) {
+        setPartySize(detected);
+        const greeting = `Welcome! We detected a party of ${detected}. Is that correct?`;
+        addAIMessage(greeting);
+        speakAndListen(greeting);
+      } else {
+        // Vision server unreachable or returned 0 — ask directly
+        setKioskState("ask_party_size");
+        const greeting = "Welcome! How many guests are in your party?";
+        addAIMessage(greeting);
+        speakAndListen(greeting);
+      }
+    }
+
+    // Hard timeout — greet regardless after DETECTION_TIMEOUT_MS
+    const timeout = setTimeout(() => {
+      const readings = detectionReadingsRef.current;
+      const fallback =
+        readings.length > 0
+          ? readings.sort((a, b) => a - b)[Math.floor(readings.length / 2)]
+          : 0;
+      fireGreeting(fallback);
+    }, DETECTION_TIMEOUT_MS);
+
+    async function startDetection() {
+      if (!video || !canvas) {
+        clearTimeout(timeout);
+        fireGreeting(0);
+        return;
+      }
+
+      let stream: MediaStream | null = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        });
+        detectionStreamRef.current = stream;
+        video.srcObject = stream;
+        await video.play();
+      } catch {
+        // Camera not available — fall back immediately
+        clearTimeout(timeout);
+        fireGreeting(0);
+        return;
+      }
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        clearTimeout(timeout);
+        fireGreeting(0);
+        return;
+      }
+
+      const interval = setInterval(async () => {
+        if (detectionReadyRef.current) {
+          clearInterval(interval);
+          return;
+        }
+        if (video.readyState < 2) return;
+
+        canvas.width = 288;
+        canvas.height = Math.round((video.videoHeight / video.videoWidth) * 288) || 162;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const image = canvas.toDataURL("image/jpeg", 0.6).split(",")[1];
+
+        try {
+          const res = await fetch(`${VISION_SERVER}/detect`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image, include_annotated: false, include_tracking: false, imgsz: 224 }),
+          });
+          if (!res.ok) return;
+          const data = (await res.json()) as { count?: number };
+          const count = typeof data.count === "number" ? data.count : 0;
+
+          detectionReadingsRef.current.push(count);
+          if (detectionReadingsRef.current.length > DETECTION_WINDOW) {
+            detectionReadingsRef.current.shift();
+          }
+
+          // Stable once window is full and all readings agree within ±1
+          const readings = detectionReadingsRef.current;
+          if (readings.length >= DETECTION_WINDOW) {
+            const sorted = [...readings].sort((a, b) => a - b);
+            const median = sorted[Math.floor(sorted.length / 2)];
+            const allClose = sorted.every((v) => Math.abs(v - median) <= 1);
+            if (allClose) {
+              clearInterval(interval);
+              clearTimeout(timeout);
+              fireGreeting(median);
+            }
+          }
+        } catch {
+          // Vision server not reachable — timeout will handle fallback
+        }
+      }, DETECTION_INTERVAL_MS);
+    }
+
+    startDetection();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -410,6 +532,9 @@ export default function WelcomePage() {
 
   return (
     <main className="flex min-h-screen flex-col bg-gradient-to-br from-zinc-50 to-zinc-100 font-sans antialiased text-black">
+      {/* Hidden detection camera — used only for party-size inference on mount */}
+      <video ref={detectionVideoRef} muted playsInline className="hidden" />
+      <canvas ref={detectionCanvasRef} className="hidden" />
       {/* Header */}
       <header className="flex items-center justify-between px-8 py-2">
         <Image
