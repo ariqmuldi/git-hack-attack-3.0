@@ -201,9 +201,9 @@ export default function WelcomePage() {
           <Image
             src="/queueo.png"
             alt="Queueo"
-            width={160}
-            height={40}
-            className="h-10 w-auto"
+            width={240}
+            height={64}
+            className="h-14 w-auto"
             priority
           />
           <p className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white">
@@ -212,7 +212,7 @@ export default function WelcomePage() {
         </header>
 
         {/* Conversation Container */}
-        <section className="mx-auto grid min-h-[560px] w-full max-w-2xl grid-rows-[1fr_auto]">
+        <section className="mx-auto grid min-h-[560px] w-full max-w-2xl content-center gap-2 -translate-y-4">
           <div className="flex items-center justify-center">
             <div className="relative h-[120px] w-full space-y-6" style={{ perspective: "1000px" }}>
               {messages.length > 0 && (
@@ -245,7 +245,7 @@ export default function WelcomePage() {
             </div>
           </div>
 
-          <div className="flex min-h-[72px] items-end justify-center pb-0 pt-0">
+          <div className="flex items-center justify-center">
             {showPartyInput && (
               <div className="flex flex-col gap-4 animate-fade-in">
               <div className="flex gap-4">
@@ -270,7 +270,7 @@ export default function WelcomePage() {
             )}
 
             {showTimer && (
-              <div className="flex flex-col items-center gap-16">
+              <div className="flex items-center gap-4">
               {/* No Button */}
               <button
                 onClick={handlePartySizeWrong}
@@ -309,7 +309,7 @@ export default function WelcomePage() {
             )}
 
             {showReservationTimer && (
-              <div className="flex flex-col items-center gap-16">
+              <div className="flex items-center gap-4">
               {/* Yes Button */}
               <Link
                 href="/admin/customer/confirm-reservation"
