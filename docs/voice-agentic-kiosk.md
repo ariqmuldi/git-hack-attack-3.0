@@ -9,7 +9,7 @@ Replace the button/timer-based welcome page with a fully conversational voice ex
 ## High-Level Flow
 
 ```
-Camera detects party → N (TBD: replace with YOLO value; currently hardcoded to 3)
+Camera detects party → N (live: kiosk opens its own camera, polls /detect every 300ms, stabilises over 5-reading window; falls back to asking the guest if unavailable)
        │
        ▼
 Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
@@ -38,7 +38,7 @@ Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
        │       └─ User says NO
        │               │
        │               ▼
-       │          Check table availability (TBD: real YOLO data; currently 50/50 random)
+       │          Check table availability (live: GET /api/cameras/CAM-FLOOR/table-zones → find free zone with capacity ≥ partySize)
        │               │
        │               ├─ Space available → Kiosk speaks: "Great news! Table 7 is ready for you.
        │               │                   Please proceed to your table — a team member will be
@@ -291,11 +291,47 @@ The screen is split into a **chat thread** — not just a single headline messag
 
 ---
 
-## Table Availability Check (TBD)
+## Table Availability Check (Implemented)
 
-For now, `checkAvailability()` returns a hardcoded `true` (table available). Real implementation will:
-1. Query Supabase `tables` for any row where `status = 'free'` AND `capacity >= partySize`
-2. Return `true` if any row found, `false` otherwise
+`checkAvailability()` fetches `GET /api/cameras/CAM-FLOOR/table-zones` (no-store cache) and searches for the first zone where `status === "free"` AND `capacity >= partySize`. Results:
+- **Free table found** → kiosk announces it by name (e.g. "Table 4 is ready for your party of 3") → resets after 10s
+- **No table found** (all occupied or none big enough) → falls through to email/waitlist flow
+- **API error** → safely defaults to waitlist flow
+
+This runs inline as an async IIFE inside the `handleGeminiResponse` callback when `intent === "no_reservation"` in the `ask_reservation` state.
+
+---
+
+## Waitlist Email Flow (Implemented)
+
+When the guest reaches `confirm_email` state and says yes (`intent === "email_confirmed"`), the welcome page:
+
+1. POSTs `{ email, partySize }` to `POST /api/waitlist`
+2. The API runs the **dwell-time wait algorithm**:
+   - Fetches all occupied `table_zones` for `CAM-FLOOR` that have a `seated_at` timestamp and `capacity >= partySize`
+   - Computes `remaining = max(5, 25 - dwellMinutes)` for each (25 min meal baseline)
+   - Sorts ascending; picks `remaining[queuePosition]` for the new guest
+   - If queue depth exceeds table count, adds 25-min cycles
+3. Inserts a row into the `waitlist` Supabase table (`id`, `guest_name`, `party_size`, `email`, `joined_at`, `notified_at`)
+4. Sends a **waitlist confirmation email** via Resend (`lib/emails/waitlist-confirmation.ts`) with estimated wait time and queue position
+5. Kiosk speaks the personalised response: *"You're on the list! Estimated wait is around X minutes. We'll email you the moment a table is ready."* → resets after 10s
+
+### Table-Ready Notification
+
+When `POST /api/cameras/CAM-FLOOR/table-occupancy` transitions a zone from `occupied → free`:
+- Queries `waitlist` for the oldest unnotified entry where `party_size <= freed zone capacity`
+- Sets `notified_at` on that row
+- Sends a **"Your table is ready"** email via Resend (`lib/emails/table-ready.ts`) with the table name
+
+### Email Templates
+
+Both templates are plain HTML strings (no external email library) in `lib/emails/`:
+- **`waitlist-confirmation.ts`** — black header, estimated wait + queue position card, zinc-toned body
+- **`table-ready.ts`** — dark hero strip with "Your table is ready.", table name card with checkmark, urgency note
+
+### SQL Migration
+
+Run `docs/sql/waitlist.sql` in the Supabase SQL Editor before using this flow.
 
 ---
 
