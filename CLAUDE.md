@@ -44,39 +44,48 @@ A computer-vision-powered reception system for restaurants. An iPhone camera + Y
 6. **Email Notification (Resend)** — When a table frees up (YOLO detects empty or staff marks free), Resend fires an email to the next waitlisted guest: *"Your table is ready!"*
 7. **Staff Dashboard (Next.js + Supabase Realtime)** — Live floor map with table states (free / occupied / reserved), dwell timers, and waitlist queue. All updates flow via Supabase Realtime from the Python service writing to Supabase.
 
-### Kiosk Screen Flow
+### Kiosk Screen Flow (Voice-Agentic)
+
+The welcome page is fully voice-driven — no buttons, no navigation to other pages. All flows complete inline and reset for the next guest after 10 seconds.
 
 ```
-Camera detects party of N approaching
-  └─ Kiosk (Welcome Page - typing animation):
-       1. "Welcome to Restaurant X" (types out, 2s pause)
-       2. "We saw you have a party of N." (types out, 2s pause)
-       3. "Do you have a reservation?" (types out)
-       ├─ [Yes, I do] → confirm reservation → "Proceed to Table X"
-       └─ [No reservation] → check YOLO-tracked table availability
-                  ├─ Table free (capacity ≥ N) → "Table X is ready for you"
-                  └─ All full → show estimated wait time
-                                └─ Guest enters email → waitlist entry created
-                                    └─ Table frees → Resend email → guest returns
+Camera detects party of N (TBD: YOLO; currently hardcoded to 3)
+  └─ Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
+       │
+       ├─ YES → "Do you have a reservation with us today?"
+       │       │
+       │       ├─ YES → "Perfect! What email address is your reservation under?"
+       │       │         [Voice transcription] → Gemini normalises email
+       │       │         TBD: Supabase lookup; currently always confirms
+       │       │         → "Got it — email. Your reservation has been confirmed!
+       │       │            Please proceed to your table." → 10s → reset
+       │       │
+       │       └─ NO → check table availability (TBD: YOLO; currently 50/50 random)
+       │                ├─ Table free → "Great news! Table 7 is ready for you." → 10s → reset
+       │                └─ All full → "Please say your email and we'll notify you."
+       │                              [Voice transcription] → Gemini normalises email
+       │                              → "Got it — email. Is that correct?"
+       │                              ├─ YES → "You're on the waitlist!" → 10s → reset
+       │                              └─ NO → ask for email again
+       │
+       └─ NO → "How many people are in your party?" → update count → back to reservation Q
 ```
 
 **Welcome Page Features:**
-- Conversational typing animation (character-by-character display)
-- Sequential message flow with automatic transitions
-- Responsive design for kiosk displays
-- Yes/No buttons appear after final message
-- **Text-to-speech (TTS)** — All welcome messages are read aloud via Web Speech API as guests interact with the kiosk
+- Fully voice-driven state machine powered by Google Gemini (`gemini-2.0-flash`)
+- Chat bubble UI: AI messages left-aligned, guest messages right-aligned, auto-scrolls
+- Live interim transcript shown in guest bubble as they speak
+- Character-by-character streaming for AI reply bubbles
+- Visual mic state strip: `idle` / `listening` / `thinking` / `speaking` / `error`
+- Fallback quick-reply chips appear after 2 consecutive `unclear` intents
+- After each terminal outcome, kiosk resets automatically after 10 seconds for next guest
+- **Text-to-speech (TTS)** — Gemini replies spoken aloud via Web Speech API; mic disabled during TTS to prevent feedback
 
 ### Additional Kiosk Option
 - **[Call a staff member]** button → triggers a notification on the staff dashboard
 
 ### Text-to-Speech (TTS)
-The welcome page automatically reads all messages aloud using the Web Speech API. This improves accessibility and provides audio guidance for guests:
-- Greeting message speaks when text animation completes
-- Party size announcement speaks after greeting
-- Reservation prompt speaks after party size message
-
-The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a speaking rate of 1.5x to deliver messages faster.
+The welcome page reads all AI replies aloud using the Web Speech API (`useTextToSpeech` hook in `lib/useTextToSpeech.ts`), configured at 1.5x rate. The mic is never active while TTS is playing.
 
 ## Architecture
 
@@ -88,10 +97,10 @@ The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a sp
     - [app/admin/layout.tsx](app/admin/layout.tsx) — Admin layout wrapper
     - [app/admin/page.tsx](app/admin/page.tsx) — Admin home/dashboard
     - [app/admin/customer/](app/admin/customer/) — Kiosk-facing guest flow:
-        - [app/admin/customer/welcome-page/page.tsx](app/admin/customer/welcome-page/page.tsx) — Kiosk greeting screen; displays party size detected by YOLO and asks about reservation
-      - [app/admin/customer/confirm-reservation/page.tsx](app/admin/customer/confirm-reservation/page.tsx) — Displays confirmed reservation details and assigned table
-      - [app/admin/customer/table-free/page.tsx](app/admin/customer/table-free/page.tsx) — Displays available table and seating instructions for walk-in guests
-      - [app/admin/customer/all-full/page.tsx](app/admin/customer/all-full/page.tsx) — Prompted when all tables are full; guest enters email to join waitlist
+        - [app/admin/customer/welcome-page/page.tsx](app/admin/customer/welcome-page/page.tsx) — Kiosk greeting screen; fully voice-driven state machine (greeting → party size → reservation → email collection → reset). All flows complete inline — no navigation to other pages. Uses `useGeminiAgent` for intent classification and `useSpeechToText` + `useTextToSpeech` for voice I/O.
+      - [app/admin/customer/confirm-reservation/page.tsx](app/admin/customer/confirm-reservation/page.tsx) — Legacy page (no longer navigated to; reservation confirmation now handled inline on welcome page)
+      - [app/admin/customer/table-free/page.tsx](app/admin/customer/table-free/page.tsx) — Legacy page (no longer navigated to; table-free announcement now handled inline on welcome page)
+      - [app/admin/customer/all-full/page.tsx](app/admin/customer/all-full/page.tsx) — Legacy page (no longer navigated to; waitlist email collection now handled inline on welcome page)
     - [app/admin/entry/page.tsx](app/admin/entry/page.tsx) — Post-login landing page; animated typing sequence ("Welcome, Restaurant X." → "How would you like to proceed?") followed by two buttons: **Customer View** → `/admin/customer/welcome-page` and **Business View** → `/admin/business/dashboard`
     - [app/admin/business/](app/admin/business/) — Staff-facing business management:
       - [app/admin/business/dashboard/page.tsx](app/admin/business/dashboard/page.tsx) — Camera monitoring dashboard. Two camera types coexist:
@@ -109,6 +118,8 @@ The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a sp
   - [lib/resend.ts](lib/resend.ts) — Resend client (`RESEND_API_KEY`); sends waitlist-ready and reservation confirmation emails
   - [lib/utils.ts](lib/utils.ts) — `cn` helper for Tailwind class merging
   - [lib/useTextToSpeech.ts](lib/useTextToSpeech.ts) — Custom React hook for text-to-speech using Web Speech API; provides `speak()`, `stop()`, and `isSpeaking()` functions with configurable rate, pitch, volume, and language
+  - [lib/useSpeechToText.ts](lib/useSpeechToText.ts) — Custom React hook wrapping the browser `SpeechRecognition` API; `continuous: false`, `interimResults: true`; fires `onResult(finalTranscript)` callback; exposes `start()`, `stop()`, `transcript`, `isListening`, `isSupported`
+  - [lib/useGeminiAgent.ts](lib/useGeminiAgent.ts) — Google Gemini REST API hook (`gemini-2.0-flash`); maintains conversation history across turns; uses strict state-machine `systemInstruction` prompt; annotates each user message with `[currentState, detectedPartySize, collectedEmail?]`; returns `{ reply, intent, partySize, email }`. Intents: `confirm_party_size`, `deny_party_size`, `provide_party_size`, `has_reservation`, `no_reservation`, `provide_email`, `email_confirmed`, `email_denied`, `unclear`. States: `greeting`, `ask_party_size`, `ask_reservation`, `collect_reservation_email`, `collect_email`, `confirm_email`. Key: `NEXT_PUBLIC_GEMINI_API_KEY`.
 - **[proxy.ts](proxy.ts)** — Next.js 16 proxy (replaces `middleware.ts`); protects all `/admin/*` routes; redirects unauthenticated users to `/login`
 - **[tests/](tests/)** — Connectivity tests for Supabase and Resend
 - **[vision/](vision/)** — Python vision microservice (see full breakdown below)
