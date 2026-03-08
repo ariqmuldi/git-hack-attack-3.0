@@ -242,23 +242,36 @@ export default function WelcomePage() {
             addAIMessage(reply);
             speakAndListen(reply);
           } else if (intent === "no_reservation") {
-            const tableAvailable = Math.random() < 0.5; // TBD: real YOLO data
-            if (tableAvailable) {
-              // Table is free — announce and reset for next guest
-              setKioskState("routing");
-              const tableMsg = "Great news! Table 7 is ready for you. Please proceed to your table — a team member will be with you shortly.";
-              addAIMessage(tableMsg);
-              setUIState("speaking");
-              speak(tableMsg, () => {
-                setTimeout(() => resetAndGreet(), 10000);
-              });
-            } else {
-              // All tables full — collect email for waitlist on this page
-              setKioskState("collect_email");
-              const fullMsg = "It looks like all tables are full. Please say your email address and we'll notify you when a table is ready.";
-              addAIMessage(fullMsg);
-              speakAndListen(fullMsg);
-            }
+            // Look up live table availability from the floor camera zones
+            void (async () => {
+              try {
+                const res = await fetch("/api/cameras/CAM-FLOOR/table-zones", { cache: "no-store" });
+                const data = res.ok ? (await res.json() as { zones?: { name: string; capacity: number; status: string }[] }) : {};
+                const zones = data.zones ?? [];
+                const freeTable = zones.find((z) => z.status === "free" && z.capacity >= partySize);
+
+                if (freeTable) {
+                  setKioskState("routing");
+                  const tableMsg = `Great news! ${freeTable.name} is ready for your party of ${partySize}. Please proceed to your table — a team member will be with you shortly.`;
+                  addAIMessage(tableMsg);
+                  setUIState("speaking");
+                  speak(tableMsg, () => {
+                    setTimeout(() => resetAndGreet(), 10000);
+                  });
+                } else {
+                  setKioskState("collect_email");
+                  const fullMsg = "It looks like all tables are currently full. Please say your email address and we'll notify you when a table is ready.";
+                  addAIMessage(fullMsg);
+                  speakAndListen(fullMsg);
+                }
+              } catch {
+                // API unreachable — assume full, collect email
+                setKioskState("collect_email");
+                const fullMsg = "It looks like all tables are currently full. Please say your email address and we'll notify you when a table is ready.";
+                addAIMessage(fullMsg);
+                speakAndListen(fullMsg);
+              }
+            })();
           }
           break;
 
@@ -301,7 +314,7 @@ export default function WelcomePage() {
           break;
       }
     },
-    [kioskState, addAIMessage, speakAndListen, speak, resetAndGreet]
+    [kioskState, partySize, addAIMessage, speakAndListen, speak, resetAndGreet]
   );
 
   // Keep ref in sync

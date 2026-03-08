@@ -56,6 +56,8 @@ A computer-vision-powered reception system for restaurants. An iPhone camera + Y
 - Vision performance improvements:
   - `/detect` supports lightweight mode (`include_annotated`, `include_tracking`, `imgsz`)
   - Dashboard polling uses lightweight detection payloads and lower-cost frame settings for better responsiveness
+- **Kiosk party-size detection (live)**: Welcome page now detects real party size via its own camera + vision server on mount. Opens `getUserMedia`, captures frames every 300ms, POSTs to `/detect`, stabilises across a 5-reading sliding window (all readings within ±1), then fires the greeting with the detected count. Falls back to asking the guest directly if the vision server is unreachable, camera is unavailable, or detection returns 0 after a 4-second timeout.
+- **Live table availability check**: The `no_reservation` branch no longer uses `Math.random()`. It now fetches `GET /api/cameras/CAM-FLOOR/table-zones` and finds the first zone where `status === "free"` AND `capacity >= partySize`. If found, the kiosk announces that specific table by name. If all tables are full or none can fit the party, it falls through to the email/waitlist flow. API errors default to the waitlist path.
 
 ### How It Works (end-to-end)
 

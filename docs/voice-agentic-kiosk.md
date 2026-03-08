@@ -9,7 +9,7 @@ Replace the button/timer-based welcome page with a fully conversational voice ex
 ## High-Level Flow
 
 ```
-Camera detects party → N (TBD: replace with YOLO value; currently hardcoded to 3)
+Camera detects party → N (live: kiosk opens its own camera, polls /detect every 300ms, stabilises over 5-reading window; falls back to asking the guest if unavailable)
        │
        ▼
 Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
@@ -38,7 +38,7 @@ Kiosk speaks: "Welcome! We detected a party of N. Is that correct?"
        │       └─ User says NO
        │               │
        │               ▼
-       │          Check table availability (TBD: real YOLO data; currently 50/50 random)
+       │          Check table availability (live: GET /api/cameras/CAM-FLOOR/table-zones → find free zone with capacity ≥ partySize)
        │               │
        │               ├─ Space available → Kiosk speaks: "Great news! Table 7 is ready for you.
        │               │                   Please proceed to your table — a team member will be
@@ -291,11 +291,14 @@ The screen is split into a **chat thread** — not just a single headline messag
 
 ---
 
-## Table Availability Check (TBD)
+## Table Availability Check (Implemented)
 
-For now, `checkAvailability()` returns a hardcoded `true` (table available). Real implementation will:
-1. Query Supabase `tables` for any row where `status = 'free'` AND `capacity >= partySize`
-2. Return `true` if any row found, `false` otherwise
+`checkAvailability()` fetches `GET /api/cameras/CAM-FLOOR/table-zones` (no-store cache) and searches for the first zone where `status === "free"` AND `capacity >= partySize`. Results:
+- **Free table found** → kiosk announces it by name (e.g. "Table 4 is ready for your party of 3") → resets after 10s
+- **No table found** (all occupied or none big enough) → falls through to email/waitlist flow
+- **API error** → safely defaults to waitlist flow
+
+This runs inline as an async IIFE inside the `handleGeminiResponse` callback when `intent === "no_reservation"` in the `ask_reservation` state.
 
 ---
 
