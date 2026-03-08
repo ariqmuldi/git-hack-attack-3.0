@@ -2,6 +2,8 @@
 
 > Built for **Hack-Attack 2026** — "Bettering Businesses" theme
 
+**[Watch the demo](https://youtu.be/cx1xIBGYu8w)**
+
 Queueo is a computer-vision-powered reception system for restaurants. An iPhone camera + YOLOv8 detects arriving guests and their party size. A guest-facing kiosk then guides them through seating via voice interaction and simple button taps — no human host needed.
 
 ---
