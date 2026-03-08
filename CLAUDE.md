@@ -89,7 +89,6 @@ The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a sp
     - [app/admin/page.tsx](app/admin/page.tsx) — Admin home/dashboard
     - [app/admin/customer/](app/admin/customer/) — Kiosk-facing guest flow:
         - [app/admin/customer/welcome-page/page.tsx](app/admin/customer/welcome-page/page.tsx) — Kiosk greeting screen; displays party size detected by YOLO and asks about reservation
-      - [app/admin/customer/welcome-page/KioskFrontCamera.tsx](app/admin/customer/welcome-page/KioskFrontCamera.tsx) — Client component that accesses the device camera, captures frames every 300ms, POSTs base64 JPEG to `vision/server.py` at `http://localhost:8000/detect`, and renders the annotated frame with a people-count overlay. Exposes `onPartySizeChange?: (count: number) => void` prop to pass live party size up to the welcome page.
       - [app/admin/customer/confirm-reservation/page.tsx](app/admin/customer/confirm-reservation/page.tsx) — Displays confirmed reservation details and assigned table
       - [app/admin/customer/table-free/page.tsx](app/admin/customer/table-free/page.tsx) — Displays available table and seating instructions for walk-in guests
       - [app/admin/customer/all-full/page.tsx](app/admin/customer/all-full/page.tsx) — Prompted when all tables are full; guest enters email to join waitlist
@@ -285,7 +284,7 @@ npm run dev
 - `@supabase/ssr` — cookie-based session management for Next.js proxy auth
 - Resend (waitlist-ready + reservation confirmation emails)
 - Python + YOLO (Ultralytics) + ByteTrack — vision microservice; detects party size and table occupancy
-- FastAPI + Uvicorn — serves `POST /detect` consumed by `KioskFrontCamera.tsx`; browser captures frames and POSTs base64 JPEG every 300ms
+- FastAPI + Uvicorn — serves `POST /detect`; browser captures frames and POSTs base64 JPEG every 300ms
 - WebRTC — planned iPhone camera-to-Python transport (not yet wired; current kiosk uses browser `getUserMedia` → HTTP polling)
 
 ## Auth
