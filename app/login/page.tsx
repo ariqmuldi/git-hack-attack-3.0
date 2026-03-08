@@ -39,14 +39,16 @@ export default function LoginPage() {
     <FrostedPage>
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-5 md:px-8">
         <header className="mb-5 flex items-center justify-between">
-          <Image
-            src="/queuo.png"
-            alt="queuo"
-            width={360}
-            height={96}
-            className="h-14 w-auto"
-            priority
-          />
+          <Link href="/">
+            <Image
+              src="/queuo.png"
+              alt="queuo"
+              width={360}
+              height={96}
+              className="h-14 w-auto"
+              priority
+            />
+          </Link>
           <FrostedPill>STAFF LOGIN</FrostedPill>
         </header>
 

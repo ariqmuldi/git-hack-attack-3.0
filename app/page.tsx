@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { FrostedPage, GlassPanel, FrostedPill } from "@/components/ui/frosted-shell";
 
@@ -10,13 +11,15 @@ export default function Home() {
       <header className="fixed inset-x-0 top-0 z-50 border-b border-white/60 bg-white/45 backdrop-blur-xl">
         <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
           {/* Logo */}
-          <Image
-            src="/queuo.png"
-            alt="queuo Logo"
-            height={80}
-            width={80}
-            className="h-14 w-auto"
-          />
+          <Link href="/">
+            <Image
+              src="/queuo.png"
+              alt="queuo Logo"
+              height={80}
+              width={80}
+              className="h-14 w-auto"
+            />
+          </Link>
 
           {/* Actions */}
           <div className="flex items-center gap-2">

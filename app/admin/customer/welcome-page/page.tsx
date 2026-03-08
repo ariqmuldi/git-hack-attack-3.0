@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Mic } from "lucide-react";
 import { useTextToSpeech } from "@/lib/useTextToSpeech";
@@ -653,14 +654,16 @@ export default function WelcomePage() {
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-5 md:px-8">
         <header className="flex items-center justify-between">
-          <Image
-            src="/queuo.png"
-            alt="queuo"
-            width={360}
-            height={96}
-            className="h-14 w-auto"
-            priority
-          />
+          <Link href="/">
+            <Image
+              src="/queuo.png"
+              alt="queuo"
+              width={360}
+              height={96}
+              className="h-14 w-auto"
+              priority
+            />
+          </Link>
           <div className="rounded-full border border-white/60 bg-white/45 px-4 py-2 text-xs font-semibold tracking-[0.14em] text-zinc-700 backdrop-blur-xl">
             KIOSK CHECK-IN
           </div>
