@@ -28,8 +28,10 @@ The product brand name is **Queuo**.
 - [docs/architecture-diagram.md](docs/architecture-diagram.md) — Mermaid whiteboard diagram of the high-level system architecture. Renders in VS Code (Markdown Preview Mermaid Support extension), GitHub, or mermaid.live. References `architecture.md` for detail.
 - [docs/voice-agentic-kiosk.md](docs/voice-agentic-kiosk.md) — Design doc for the voice-agentic kiosk flow: STT → Gemini NLU → TTS state machine, component responsibilities, UX states, conversation bubble layout, fallback behaviour.
 - [docs/Customer_Kiosk_Flow.md](docs/Customer_Kiosk_Flow.md) — Original kiosk screen flow wireframes and route map.
+- [docs/sql/setup.sql](docs/sql/setup.sql) — **Run this once** to create all tables in a fresh Supabase project (safe to re-run; includes `tables`, `table_zones`, `waitlist`, `profiles`).
 - [docs/sql/table_zones.sql](docs/sql/table_zones.sql) — Migration: `table_zones` table.
 - [docs/sql/waitlist.sql](docs/sql/waitlist.sql) — Migration: `waitlist` table.
+- [docs/sql/profiles.sql](docs/sql/profiles.sql) — Migration: `profiles` table (RBAC); auto-created on signup via trigger; `role` defaults to `'user'`.
 
 ## Project: Reception Bot (Primary — Hack-Attack 2026)
 
@@ -135,7 +137,8 @@ The `useTextToSpeech` hook (in `lib/use-text-to-speech.ts`) is configured with a
 
 - **[app/](app/)** — Next.js App Router. Contains:
   - [app/page.tsx](app/page.tsx) — Public marketing/landing page
-  - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth); redirects to `/admin/entry` on success
+  - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth); redirects to `/admin/entry` on success; links to `/register`
+  - [app/register/page.tsx](app/register/page.tsx) — Registration page; calls `supabaseBrowser.auth.signUp()`; validates passwords client-side; redirects to `/admin/entry` on success (requires email confirmation disabled in Supabase Dashboard → Authentication → Settings)
   - [app/logout/page.tsx](app/logout/page.tsx) — Logout route; signs out and redirects to `/login`
   - [app/admin/](app/admin/) — Kiosk-facing guest-interaction interface and admin routes (protected by `proxy.ts`):
     - [app/admin/layout.tsx](app/admin/layout.tsx) — Admin layout wrapper
@@ -180,6 +183,16 @@ The `useTextToSpeech` hook (in `lib/use-text-to-speech.ts`) is configured with a
 - `table_zones` — dashboard-configured floor zones: `id`, `camera_id`, `name`, `capacity`, normalized bounds (`x`,`y`,`w`,`h`), `status`, `seated_at`
 - `reservations` — `id`, `guest_name`, `party_size`, `reserved_for` (timestamp), `table_id`, `status`
 - `waitlist` — `id`, `guest_name`, `party_size`, `email`, `joined_at`, `notified_at`
+- `profiles` — one row per auth user: `id` (FK → `auth.users`), `email`, `role` (`'user'`/`'admin'`), `created_at`. Auto-created on signup via trigger. Promote to admin with: `update public.profiles set role = 'admin' where email = '...';`
+
+#### Fresh setup
+Paste [docs/sql/setup.sql](docs/sql/setup.sql) into the Supabase SQL Editor and run. Creates all tables in one shot, safe to re-run.
+
+#### Individual migrations
+- `tables` — inline in this file (see below)
+- `table_zones` — [docs/sql/table_zones.sql](docs/sql/table_zones.sql)
+- `waitlist` — [docs/sql/waitlist.sql](docs/sql/waitlist.sql)
+- `profiles` — [docs/sql/profiles.sql](docs/sql/profiles.sql)
 
 #### Migration: create `tables`
 Run in Supabase SQL Editor to create the `tables` table (required for the zone editor save):
@@ -191,20 +204,6 @@ create table public.tables (
   status text not null default 'free' check (status in ('free', 'occupied', 'reserved')),
   seated_at timestamptz
 );
-```
-
-#### Migration: create `table_zones`
-Run:
-```sql
--- Supabase SQL Editor
-docs/sql/table_zones.sql
-```
-
-#### Migration: create `waitlist`
-Run:
-```sql
--- Supabase SQL Editor
-docs/sql/waitlist.sql
 ```
 
 ---
@@ -369,7 +368,9 @@ npm run dev
 ## Auth
 
 - Login: `POST /login` via `supabaseBrowser.auth.signInWithPassword`
+- Register: `/register` via `supabaseBrowser.auth.signUp`; email confirmation must be **disabled** in Supabase Dashboard → Authentication → Settings for immediate sign-in after registration
 - Logout: visit `/logout` — signs out and redirects to `/login`
 - Protected routes: all `/admin/*` routes are guarded by `proxy.ts`; unauthenticated requests redirect to `/login`
 - Session storage: cookies (via `@supabase/ssr`) so the proxy can read auth state server-side
 - **Do not use `lib/supabase.ts` (secret key) for client-side auth** — only use `lib/supabase-browser.ts`
+- **RBAC**: `profiles` table stores `role` (`'user'`/`'admin'`); new signups default to `'user'` via trigger. Role enforcement not yet wired into routing — reserved for future use.
