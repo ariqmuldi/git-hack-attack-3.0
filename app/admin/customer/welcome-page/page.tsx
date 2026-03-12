@@ -4,9 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Mic } from "lucide-react";
-import { useTextToSpeech } from "@/lib/useTextToSpeech";
-import { useSpeechToText } from "@/lib/useSpeechToText";
-import { useGeminiAgent, GeminiIntent } from "@/lib/useGeminiAgent";
+import { useTextToSpeech } from "@/lib/use-text-to-speech";
+import { useSpeechToText } from "@/lib/use-speech-to-text";
+import { useGeminiAgent, GeminiIntent } from "@/lib/use-gemini-agent";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

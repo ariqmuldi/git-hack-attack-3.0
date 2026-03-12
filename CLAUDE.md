@@ -69,12 +69,12 @@ A computer-vision-powered reception system for restaurants. An iPhone camera + Y
 - **Live table availability check**: The `no_reservation` branch no longer uses `Math.random()`. It now fetches `GET /api/cameras/CAM-FLOOR/table-zones` and finds the first zone where `status === "free"` AND `capacity >= partySize`. If found, the kiosk announces that specific table by name. If all tables are full or none can fit the party, it falls through to the email/waitlist flow. API errors default to the waitlist path.
 - **Voice-agentic reservation flow (updated)**: When a guest says they have a reservation, the kiosk now asks for a 3-digit reservation code (001–099) instead of an email address. Gemini extracts and zero-pads the spoken number (e.g. "seventy two" → `"072"`). On a valid code, the kiosk responds: *"Got it! Your reservation has been confirmed. Please proceed to table [N]."* where N is a random number 1–9 generated at runtime. The `collect_reservation_email` kiosk state has been replaced by `collect_reservation_code`, and a new `provide_reservation_code` Gemini intent handles this flow. The `GeminiResponse` type now includes a `reservationCode: string | null` field.
 - **Kiosk API error handling (robust)**:
-  - `lib/useGeminiAgent.ts` throws structured, prefixed errors: `API_KEY_MISSING:`, `API_KEY_INVALID:<status>:`, `RATE_LIMIT:429:`, `API_ERROR:<status>:`. Each includes the raw error body so the exact message is surfaced.
+  - `lib/use-gemini-agent.ts` throws structured, prefixed errors: `API_KEY_MISSING:`, `API_KEY_INVALID:<status>:`, `RATE_LIMIT:429:`, `API_ERROR:<status>:`. Each includes the raw error body so the exact message is surfaced.
   - Permanent errors (missing/invalid key): show a full-screen red overlay with error detail; suppress TTS and the greeting entirely via `permanentErrorRef`; do not auto-clear.
   - Transient errors (429 rate limit, other HTTP errors): speak the error aloud, show it in the bottom bar in red monospace, then auto-retry after 2 s.
   - `processingRef` is reset immediately at the top of every catch block so the next STT result is never silently dropped.
   - `stopSpeech()` is called whenever a permanent error is set, including from the runtime catch paths.
-- **Gemini API key moved server-side**: The Gemini API key is now `GEMINI_API_KEY` (no `NEXT_PUBLIC_` prefix) and is never sent to the browser. `lib/useGeminiAgent.ts` calls `POST /api/gemini` (a Next.js API route) which reads the key server-side and proxies the request to Gemini. The client-side startup key-format check has been removed.
+- **Gemini API key moved server-side**: The Gemini API key is now `GEMINI_API_KEY` (no `NEXT_PUBLIC_` prefix) and is never sent to the browser. `lib/use-gemini-agent.ts` calls `POST /api/gemini` (a Next.js API route) which reads the key server-side and proxies the request to Gemini. The client-side startup key-format check has been removed.
 
 - **Waitlist email flow (fully implemented)**:
   - When a guest's email is confirmed on the kiosk (`confirm_email` + `email_confirmed`), the welcome page POSTs to `POST /api/waitlist` with `{ email, partySize }`.
@@ -129,7 +129,7 @@ The welcome page automatically reads all messages aloud using the Web Speech API
 - Party size announcement speaks after greeting
 - Reservation prompt speaks after party size message
 
-The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a speaking rate of 1.5x to deliver messages faster.
+The `useTextToSpeech` hook (in `lib/use-text-to-speech.ts`) is configured with a speaking rate of 1.5x to deliver messages faster.
 
 ## Architecture
 
@@ -168,7 +168,9 @@ The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a sp
   - [lib/emails/waitlist-confirmation.ts](lib/emails/waitlist-confirmation.ts) — HTML email template: waitlist confirmation with estimated wait time and queue position; Queuo black/zinc brand design
   - [lib/emails/table-ready.ts](lib/emails/table-ready.ts) — HTML email template: "your table is ready" notification with table name; dark hero + brand design
   - [lib/utils.ts](lib/utils.ts) — `cn` helper for Tailwind class merging
-  - [lib/useTextToSpeech.ts](lib/useTextToSpeech.ts) — Custom React hook for text-to-speech using Web Speech API; provides `speak()`, `stop()`, and `isSpeaking()` functions with configurable rate, pitch, volume, and language
+  - [lib/use-text-to-speech.ts](lib/use-text-to-speech.ts) — Custom React hook for text-to-speech using Web Speech API; provides `speak()`, `stop()`, and `isSpeaking()` functions with configurable rate, pitch, volume, and language
+  - [lib/use-speech-to-text.ts](lib/use-speech-to-text.ts) — Custom React hook for speech-to-text using the Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`); provides `start()`, `stop()`, `transcript`, `isListening`, and `isSupported`
+  - [lib/use-gemini-agent.ts](lib/use-gemini-agent.ts) — Custom React hook that manages conversation history and sends messages to `POST /api/gemini`; parses structured `GeminiResponse` JSON (intent, partySize, email, reservationCode); exports `GeminiIntent` and `GeminiResponse` types
 - **[proxy.ts](proxy.ts)** — Next.js 16 proxy (replaces `middleware.ts`); protects all `/admin/*` routes; redirects unauthenticated users to `/login`
 - **[tests/](tests/)** — Connectivity tests for Supabase and Resend
 - **[vision/](vision/)** — Python vision microservice (see full breakdown below)
