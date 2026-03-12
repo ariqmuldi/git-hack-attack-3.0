@@ -1,6 +1,6 @@
 -- =============================================================
 -- Queuo — full database setup
--- Run this once in the Supabase SQL Editor to create all tables.
+-- Run this once in the Supabase SQL Editor to create all tables and policies.
 -- Safe to re-run (uses IF NOT EXISTS / OR REPLACE throughout).
 -- =============================================================
 
@@ -71,9 +71,82 @@ create trigger on_auth_user_created
 
 alter table public.profiles enable row level security;
 
-create policy if not exists "Users can view own profile"
+drop policy if exists "Users can view own profile" on public.profiles;
+create policy "Users can view own profile"
   on public.profiles for select
   using (auth.uid() = id);
 
 -- To promote a user to admin:
 -- update public.profiles set role = 'admin' where email = 'you@example.com';
+
+-- ── 5. RLS policies (table-level access control) ──────────────
+-- Restricts tables / table_zones / waitlist to admin-role users.
+-- Kiosk insert on waitlist is allowed for any authenticated user.
+
+create or replace function public.current_user_role()
+returns text
+language sql
+security definer
+stable
+as $$
+  select role from public.profiles where id = auth.uid()
+$$;
+
+-- tables
+alter table public.tables enable row level security;
+
+drop policy if exists "Admins can read tables" on public.tables;
+create policy "Admins can read tables"
+  on public.tables for select
+  using (public.current_user_role() = 'admin');
+
+drop policy if exists "Admins can insert tables" on public.tables;
+create policy "Admins can insert tables"
+  on public.tables for insert
+  with check (public.current_user_role() = 'admin');
+
+drop policy if exists "Admins can update tables" on public.tables;
+create policy "Admins can update tables"
+  on public.tables for update
+  using (public.current_user_role() = 'admin');
+
+drop policy if exists "Admins can delete tables" on public.tables;
+create policy "Admins can delete tables"
+  on public.tables for delete
+  using (public.current_user_role() = 'admin');
+
+-- table_zones
+alter table public.table_zones enable row level security;
+
+drop policy if exists "Admins can read table_zones" on public.table_zones;
+create policy "Admins can read table_zones"
+  on public.table_zones for select
+  using (public.current_user_role() = 'admin');
+
+drop policy if exists "Admins can insert table_zones" on public.table_zones;
+create policy "Admins can insert table_zones"
+  on public.table_zones for insert
+  with check (public.current_user_role() = 'admin');
+
+drop policy if exists "Admins can update table_zones" on public.table_zones;
+create policy "Admins can update table_zones"
+  on public.table_zones for update
+  using (public.current_user_role() = 'admin');
+
+drop policy if exists "Admins can delete table_zones" on public.table_zones;
+create policy "Admins can delete table_zones"
+  on public.table_zones for delete
+  using (public.current_user_role() = 'admin');
+
+-- waitlist
+alter table public.waitlist enable row level security;
+
+drop policy if exists "Admins can read waitlist" on public.waitlist;
+create policy "Admins can read waitlist"
+  on public.waitlist for select
+  using (public.current_user_role() = 'admin');
+
+drop policy if exists "Authenticated users can join waitlist" on public.waitlist;
+create policy "Authenticated users can join waitlist"
+  on public.waitlist for insert
+  with check (auth.role() = 'authenticated');
