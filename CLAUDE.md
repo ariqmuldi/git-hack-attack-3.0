@@ -69,12 +69,12 @@ A computer-vision-powered reception system for restaurants. An iPhone camera + Y
 - **Live table availability check**: The `no_reservation` branch no longer uses `Math.random()`. It now fetches `GET /api/cameras/CAM-FLOOR/table-zones` and finds the first zone where `status === "free"` AND `capacity >= partySize`. If found, the kiosk announces that specific table by name. If all tables are full or none can fit the party, it falls through to the email/waitlist flow. API errors default to the waitlist path.
 - **Voice-agentic reservation flow (updated)**: When a guest says they have a reservation, the kiosk now asks for a 3-digit reservation code (001–099) instead of an email address. Gemini extracts and zero-pads the spoken number (e.g. "seventy two" → `"072"`). On a valid code, the kiosk responds: *"Got it! Your reservation has been confirmed. Please proceed to table [N]."* where N is a random number 1–9 generated at runtime. The `collect_reservation_email` kiosk state has been replaced by `collect_reservation_code`, and a new `provide_reservation_code` Gemini intent handles this flow. The `GeminiResponse` type now includes a `reservationCode: string | null` field.
 - **Kiosk API error handling (robust)**:
-  - `lib/useGeminiAgent.ts` now throws structured, prefixed errors: `API_KEY_MISSING:`, `API_KEY_INVALID:<status>:`, `RATE_LIMIT:429:`, `API_ERROR:<status>:`. Each includes the raw Gemini error body so the exact message is surfaced.
-  - Welcome page validates `NEXT_PUBLIC_GEMINI_API_KEY` on mount: checks it is non-empty, starts with `"AIza"`, and is ≥ 35 characters. Any failure sets a **permanent error** immediately before the greeting fires.
-  - Permanent errors (missing/invalid key): show a full-screen red overlay with the exact env var name and error detail; suppress TTS and the greeting entirely via `permanentErrorRef`; do not auto-clear.
+  - `lib/useGeminiAgent.ts` throws structured, prefixed errors: `API_KEY_MISSING:`, `API_KEY_INVALID:<status>:`, `RATE_LIMIT:429:`, `API_ERROR:<status>:`. Each includes the raw error body so the exact message is surfaced.
+  - Permanent errors (missing/invalid key): show a full-screen red overlay with error detail; suppress TTS and the greeting entirely via `permanentErrorRef`; do not auto-clear.
   - Transient errors (429 rate limit, other HTTP errors): speak the error aloud, show it in the bottom bar in red monospace, then auto-retry after 2 s.
   - `processingRef` is reset immediately at the top of every catch block so the next STT result is never silently dropped.
   - `stopSpeech()` is called whenever a permanent error is set, including from the runtime catch paths.
+- **Gemini API key moved server-side**: The Gemini API key is now `GEMINI_API_KEY` (no `NEXT_PUBLIC_` prefix) and is never sent to the browser. `lib/useGeminiAgent.ts` calls `POST /api/gemini` (a Next.js API route) which reads the key server-side and proxies the request to Gemini. The client-side startup key-format check has been removed.
 
 - **Waitlist email flow (fully implemented)**:
   - When a guest's email is confirmed on the kiosk (`confirm_email` + `email_confirmed`), the welcome page POSTs to `POST /api/waitlist` with `{ email, partySize }`.
@@ -160,6 +160,7 @@ The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a sp
   - [app/api/cameras/[cameraId]/table-zones/route.ts](app/api/cameras/[cameraId]/table-zones/route.ts) — `GET`/`PUT` table-zone persistence for dashboard (validates bounds/capacity, upserts, deletes removed zones).
   - [app/api/cameras/[cameraId]/table-occupancy/route.ts](app/api/cameras/[cameraId]/table-occupancy/route.ts) — `POST` occupancy transitions (`free`/`occupied`) and `seated_at` updates per zone. On `occupied → free` transition, queries `waitlist` for next fitting guest, sets `notified_at`, and sends "table ready" email via Resend.
   - [app/api/waitlist/route.ts](app/api/waitlist/route.ts) — `POST` joins a guest to the waitlist: runs dwell-time wait algorithm, inserts into `waitlist`, sends confirmation email. `GET` returns all unnotified entries ordered by `joined_at`.
+  - [app/api/gemini/route.ts](app/api/gemini/route.ts) — `POST /api/gemini`; server-side proxy to Gemini `generateContent` API. Reads `GEMINI_API_KEY` (never exposed to browser); forwards the request body verbatim; maps Gemini HTTP errors to structured prefixed error strings (`API_KEY_MISSING:`, `API_KEY_INVALID:`, `RATE_LIMIT:`, `API_ERROR:`) for the client to parse.
 - **[lib/](lib/)** — Shared service clients:
   - [lib/supabase.ts](lib/supabase.ts) — Server-side Supabase client (`SUPABASE_URL` + `SUPABASE_SECRET_KEY`); bypasses RLS; use in API routes and server actions only
   - [lib/supabase-browser.ts](lib/supabase-browser.ts) — Browser-side Supabase client (`NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY`); uses `@supabase/ssr` `createBrowserClient`; stores session in cookies for proxy access
@@ -334,6 +335,7 @@ NEXT_PUBLIC_SUPABASE_URL=       # Same value as SUPABASE_URL (browser-safe)
 NEXT_PUBLIC_SUPABASE_ANON_KEY=  # anon/public key (browser-safe)
 RESEND_API_KEY=
 RESEND_TEST_EMAIL=              # Your Resend account email — used by npm run test:resend
+GEMINI_API_KEY=                 # Google AI Studio API key (server-side only, used by /api/gemini proxy)
 ```
 
 **Getting credentials:**
