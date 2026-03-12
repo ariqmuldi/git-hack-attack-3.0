@@ -129,24 +129,7 @@ export default function WelcomePage() {
   }, []);
 
   // ─── Startup API key check ────────────────────────────────────────────────
-
-  useEffect(() => {
-    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-    const isValidFormat = apiKey && apiKey.startsWith("AIza") && apiKey.length >= 35;
-    if (!isValidFormat) {
-      permanentErrorRef.current = true;
-      stopSpeech();
-      setApiErrorInfo({
-        display: !apiKey
-          ? "NEXT_PUBLIC_GEMINI_API_KEY is not set in .env"
-          : `NEXT_PUBLIC_GEMINI_API_KEY looks invalid — got "${apiKey.slice(0, 10)}…" (expected a key starting with "AIza", length ≥ 35)`,
-        spoken: "Configuration error: the AI assistant API key is missing or invalid. Please contact a staff member.",
-        permanent: true,
-      });
-      setUIState("error");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // API key validation is handled server-side in /api/gemini
 
   const addAIMessage = useCallback((text: string) => {
     setMessages((prev) => [

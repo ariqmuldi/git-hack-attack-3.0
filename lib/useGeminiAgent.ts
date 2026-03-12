@@ -191,11 +191,6 @@ export function useGeminiAgent() {
       userText: string,
       context: { detectedPartySize: number; currentState: KioskState; collectedEmail?: string }
     ): Promise<GeminiResponse> => {
-      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error('API_KEY_MISSING: NEXT_PUBLIC_GEMINI_API_KEY is not configured.');
-      }
-
       // Build annotated user message with current state context
       const contextParts = [
         `currentState: ${context.currentState}`,
@@ -215,36 +210,28 @@ export function useGeminiAgent() {
         parts: [{ text: msg.text }],
       }));
 
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents,
-          }),
-        }
-      );
+      const res = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents,
+        }),
+      });
 
       if (!res.ok) {
-        let errorBody = '';
+        let errorMessage = '';
         try {
-          const errData = await res.json() as { error?: { message?: string } };
-          errorBody = errData.error?.message ?? JSON.stringify(errData);
+          const errData = await res.json() as { error?: string };
+          errorMessage = errData.error ?? '';
         } catch {
           // ignore parse failure
         }
 
-        if (!apiKey || res.status === 400) {
-          throw new Error(`API_KEY_INVALID:${res.status}: ${errorBody || 'Bad request — check your Gemini API key.'}`);
-        } else if (res.status === 401 || res.status === 403) {
-          throw new Error(`API_KEY_INVALID:${res.status}: ${errorBody || 'Unauthorized — the API key may be invalid or revoked.'}`);
-        } else if (res.status === 429) {
-          throw new Error(`RATE_LIMIT:429: ${errorBody || 'Too many requests — quota exceeded.'}`);
-        } else {
-          throw new Error(`API_ERROR:${res.status}: ${errorBody || res.statusText}`);
+        if (errorMessage.startsWith('API_KEY_MISSING:') || errorMessage.startsWith('API_KEY_INVALID:') || errorMessage.startsWith('RATE_LIMIT:') || errorMessage.startsWith('API_ERROR:')) {
+          throw new Error(errorMessage);
         }
+        throw new Error(`API_ERROR:${res.status}: ${errorMessage || res.statusText}`);
       }
 
       const data = await res.json();
