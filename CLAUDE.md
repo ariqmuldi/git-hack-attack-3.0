@@ -354,3 +354,9 @@ npm run dev
 - Session storage: cookies (via `@supabase/ssr`) so the proxy can read auth state server-side
 - **Do not use `lib/supabase.ts` (secret key) for client-side auth** — only use `lib/supabase-browser.ts`
 - **RBAC**: `profiles` table stores `role` (`'user'`/`'admin'`); new signups default to `'user'` via trigger. RLS policies block direct database access (via Supabase dashboard, REST API, or anon key) for non-admin users. All app routes and API routes are intentionally open to any authenticated user — the RLS layer is purely a guard against external DB manipulation, not in-app access control.
+
+| Where | Who | Can touch DB? |
+|---|---|---|
+| Web app API routes | any user | Yes (service role bypasses RLS) |
+| Direct Supabase access | admin | Yes (RLS allows) |
+| Direct Supabase access | regular user | No (RLS blocks) |
