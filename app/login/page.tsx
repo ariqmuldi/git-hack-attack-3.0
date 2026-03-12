@@ -66,9 +66,9 @@ export default function LoginPage() {
               </h1>
               <p className="mt-2 text-sm text-zinc-500">
                 Don&apos;t have an account?{" "}
-                <a href="#" className="text-black underline underline-offset-2">
-                  Contact us
-                </a>
+                <Link href="/register" className="text-black underline underline-offset-2">
+                  Create one
+                </Link>
               </p>
 
               <form onSubmit={handleSignIn} className="mt-8 flex flex-col gap-5">
