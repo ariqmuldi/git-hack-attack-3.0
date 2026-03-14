@@ -40,6 +40,15 @@ A computer-vision-powered reception system for restaurants. An iPhone camera + Y
 - **Business Side (Staff Dashboard)** — Staff configure table zones and monitor floor state in real time
 - **Consumer Side (Kiosk)** — Guest-facing screen at the entrance; shows greeting and guides seating via tappable buttons
 
+### Production Deployment Behaviour
+
+- **`CAMERAS_ENABLED` flag** — `const CAMERAS_ENABLED = process.env.NODE_ENV !== "production"`. In production (`npm run build && npm start`, or any deployment platform), all camera and vision features are disabled at the source:
+  - No `getUserMedia` calls, no vision bridge started, no detection polling
+  - Camera tiles show "Camera not available" placeholder
+  - Zone editor modal, "Configure Floor Tables", and "Manage Zones" buttons are hidden; clicking camera tiles does nothing
+- **Hydration fix** — `timestamp` initialises to `""` and `trafficSamples` initialises to `[]` on both server and client; both are populated in `useEffect` after mount. This eliminates the React error #418 hydration mismatch caused by `toLocaleTimeString()` and `localStorage` reads during SSR.
+- To simulate production locally: `npm run build && npm start`
+
 ### Recent Implemented Changes (March 2026)
 
 - Admin table-zone setup is now integrated directly in the business dashboard modal (draw, edit, delete, save).

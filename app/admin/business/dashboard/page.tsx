@@ -136,6 +136,7 @@ const ZONES = ["All", "Entrance", "Dining"] as const;
 type Zone = (typeof ZONES)[number];
 
 const USE_FAKE_ANALYTICS = true;
+const CAMERAS_ENABLED = process.env.NODE_ENV !== "production";
 
 const MOCK_HOURLY_OCCUPANCY = [
   4, 3, 2, 2, 3, 6, 10, 14, 18, 21, 25, 29,
@@ -887,7 +888,7 @@ function CameraTile({
           <div className="flex h-full w-full items-center justify-center text-sm text-zinc-500">
             <div className="flex flex-col items-center gap-2">
               <Camera className="size-8 text-zinc-600" />
-              <span>No signal</span>
+              <span>Camera not available</span>
             </div>
           </div>
         )}
@@ -1062,27 +1063,8 @@ export default function BusinessDashboardPage() {
     [ENTRANCE_CAMERA_ID]: 0,
     [FLOOR_CAMERA_ID]: 0,
   });
-  const [timestamp, setTimestamp] = useState(now());
-  const [trafficSamples, setTrafficSamples] = useState<TrafficSample[]>(() => {
-    if (typeof window === "undefined") return [];
-    const saved = localStorage.getItem("traffic-samples-v1");
-    if (!saved) return [];
-    try {
-      const parsed = JSON.parse(saved) as TrafficSample[];
-      if (!Array.isArray(parsed)) return [];
-      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-      return parsed
-        .filter(
-          (sample) =>
-            sample &&
-            typeof sample.timestamp === "number" &&
-            typeof sample.totalPeople === "number"
-        )
-        .filter((sample) => sample.timestamp >= oneDayAgo);
-    } catch {
-      return [];
-    }
-  });
+  const [timestamp, setTimestamp] = useState("");
+  const [trafficSamples, setTrafficSamples] = useState<TrafficSample[]>([]);
   const [zoneEditorOpen, setZoneEditorOpen] = useState(false);
   const [zones, setZones] = useState<TableZone[]>([]);
   const [peopleAtTableById, setPeopleAtTableById] = useState<Record<string, number>>({});
@@ -1249,8 +1231,31 @@ export default function BusinessDashboardPage() {
   }, [diningSourceIndex, setVisionBridgeIds, stopVisionBridgeCameras]);
 
   useEffect(() => {
+    setTimestamp(now());
     const timer = setInterval(() => setTimestamp(now()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("traffic-samples-v1");
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved) as TrafficSample[];
+      if (!Array.isArray(parsed)) return;
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      setTrafficSamples(
+        parsed
+          .filter(
+            (s) =>
+              s &&
+              typeof s.timestamp === "number" &&
+              typeof s.totalPeople === "number"
+          )
+          .filter((s) => s.timestamp >= oneDayAgo)
+      );
+    } catch {
+      // ignore malformed data
+    }
   }, []);
 
   const loadZones = useCallback(async () => {
@@ -1283,6 +1288,7 @@ export default function BusinessDashboardPage() {
   }, [loadZones]);
 
   useEffect(() => {
+    if (!CAMERAS_ENABLED) return;
     refreshVideoInputs(true);
 
     const onDeviceChange = () => {
@@ -1296,6 +1302,7 @@ export default function BusinessDashboardPage() {
   }, [refreshVideoInputs]);
 
   useEffect(() => {
+    if (!CAMERAS_ENABLED) return;
     if (!selectedDeviceIds.entrance && !selectedDeviceIds.dining) return;
 
     let cancelled = false;
@@ -1365,6 +1372,7 @@ export default function BusinessDashboardPage() {
   }, [stopStream]);
 
   useEffect(() => {
+    if (!CAMERAS_ENABLED) return;
     if (!useVisionBridgeForDining) {
       stopVisionBridgeCameras();
       return;
@@ -1480,6 +1488,7 @@ export default function BusinessDashboardPage() {
   );
 
   useEffect(() => {
+    if (!CAMERAS_ENABLED) return;
     if (!useVisionBridgeForDining) return;
     const diningBridgeId = visionBridgeCameraIdByRole.dining;
     if (!diningBridgeId) return;
@@ -1534,6 +1543,7 @@ export default function BusinessDashboardPage() {
   }, [syncFloorOccupancy, useVisionBridgeForDining, visionBridgeCameraIdByRole.dining]);
 
   useEffect(() => {
+    if (!CAMERAS_ENABLED) return;
     const entranceStream = cameraStreams[ENTRANCE_CAMERA_ID];
     if (!entranceStream) {
       setDetectionSnapshotByCamera((prev) => ({
@@ -1639,6 +1649,7 @@ export default function BusinessDashboardPage() {
   }, [cameraStreams]);
 
   useEffect(() => {
+    if (!CAMERAS_ENABLED) return;
     if (useVisionBridgeForDining) return;
     const diningStream = cameraStreams[FLOOR_CAMERA_ID];
     if (!diningStream) return;
@@ -2136,14 +2147,16 @@ export default function BusinessDashboardPage() {
                 <div className="hidden rounded-xl border border-white/70 bg-white/70 px-3 py-1.5 text-[11px] font-medium text-zinc-600 md:block">
                   Dining: {useVisionBridgeForDining ? `Vision source ${diningSourceIndex}` : diningDeviceLabel}
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9 rounded-xl border-transparent bg-black px-4 text-xs font-semibold text-white hover:bg-zinc-800"
-                  onClick={() => setZoneEditorOpen(true)}
-                >
-                  Configure Floor Tables
-                </Button>
+                {CAMERAS_ENABLED && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 rounded-xl border-transparent bg-black px-4 text-xs font-semibold text-white hover:bg-zinc-800"
+                    onClick={() => setZoneEditorOpen(true)}
+                  >
+                    Configure Floor Tables
+                  </Button>
+                )}
               </div>
             </nav>
 
@@ -2319,13 +2332,15 @@ export default function BusinessDashboardPage() {
                   </p>
                   <p className="mt-1 text-sm font-medium text-zinc-700">{floorSummary}</p>
                 </div>
-                <Button
-                  size="sm"
-                  className="h-8 rounded-xl bg-black px-4 text-xs font-semibold text-white hover:bg-zinc-800"
-                  onClick={() => setZoneEditorOpen(true)}
-                >
-                  Manage Zones
-                </Button>
+                {CAMERAS_ENABLED && (
+                  <Button
+                    size="sm"
+                    className="h-8 rounded-xl bg-black px-4 text-xs font-semibold text-white hover:bg-zinc-800"
+                    onClick={() => setZoneEditorOpen(true)}
+                  >
+                    Manage Zones
+                  </Button>
+                )}
               </div>
 
               {zones.length > 0 && (
@@ -2397,9 +2412,9 @@ export default function BusinessDashboardPage() {
                         ? detectionSnapshotByCamera[ENTRANCE_CAMERA_ID]
                         : undefined
                     }
-                    onOpenView={cam.id === FLOOR_CAMERA_ID ? () => setZoneEditorOpen(true) : undefined}
+                    onOpenView={CAMERAS_ENABLED && cam.id === FLOOR_CAMERA_ID ? () => setZoneEditorOpen(true) : undefined}
                     onConfigureTables={
-                      cam.id === FLOOR_CAMERA_ID
+                      CAMERAS_ENABLED && cam.id === FLOOR_CAMERA_ID
                         ? () => setZoneEditorOpen(true)
                         : undefined
                     }
@@ -2575,7 +2590,7 @@ export default function BusinessDashboardPage() {
         </GlassPanel>
       </div>
 
-      {zoneEditorOpen && (
+      {CAMERAS_ENABLED && zoneEditorOpen && (
         <ZoneEditorModal
           stream={useVisionBridgeForDining ? null : cameraStreams[FLOOR_CAMERA_ID]}
           streamUrl={useVisionBridgeForDining ? diningVisionStreamUrl : null}
