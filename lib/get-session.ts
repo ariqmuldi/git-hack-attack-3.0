@@ -14,6 +14,6 @@ export async function getServerUser(): Promise<User | null> {
       },
     }
   );
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.user ?? null;
+  const { data: { user } } = await supabase.auth.getUser();
+  return user ?? null;
 }
