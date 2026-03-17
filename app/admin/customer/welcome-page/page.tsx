@@ -4,9 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Mic } from "lucide-react";
-import { useTextToSpeech } from "@/lib/useTextToSpeech";
-import { useSpeechToText } from "@/lib/useSpeechToText";
-import { useGeminiAgent, GeminiIntent } from "@/lib/useGeminiAgent";
+import { useTextToSpeech } from "@/lib/use-text-to-speech";
+import { useSpeechToText } from "@/lib/use-speech-to-text";
+import { useGeminiAgent, GeminiIntent } from "@/lib/use-gemini-agent";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -34,6 +34,7 @@ interface ChatMessage {
 
 const DEFAULT_PARTY_SIZE = 2;
 const VISION_SERVER = process.env.NEXT_PUBLIC_VISION_SERVER ?? "http://localhost:8000";
+const KIOSK_VISION_ENABLED = process.env.NODE_ENV !== "production";
 const DETECTION_WINDOW = 5; // readings before we consider the count stable
 const DETECTION_INTERVAL_MS = 300;
 const DETECTION_TIMEOUT_MS = 4000; // fall back after this if no stable reading
@@ -49,6 +50,7 @@ export default function WelcomePage() {
   const [showFallbackChips, setShowFallbackChips] = useState(false);
   const [collectedEmail, setCollectedEmail] = useState<string>("");
   const [assistantLift, setAssistantLift] = useState(0);
+  const [apiErrorInfo, setApiErrorInfo] = useState<{ display: string; spoken: string; permanent: boolean } | null>(null);
 
   // Refs for breaking circular callback dependencies
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -66,6 +68,7 @@ export default function WelcomePage() {
   const detectionStreamRef = useRef<MediaStream | null>(null);
   const detectionReadingsRef = useRef<number[]>([]);
   const detectionReadyRef = useRef(false);
+  const permanentErrorRef = useRef(false);
 
   // Pre-computed bar heights to avoid Math.random in render
   const barHeights = useMemo(() => [18, 24, 14, 20, 16], []);
@@ -84,6 +87,50 @@ export default function WelcomePage() {
   const scrollToBottom = useCallback(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
+
+  const parseApiError = useCallback((err: unknown): { display: string; spoken: string; permanent: boolean } => {
+    const raw = err instanceof Error ? err.message : String(err);
+    if (raw.startsWith("API_KEY_MISSING:")) {
+      const detail = raw.replace("API_KEY_MISSING:", "").trim();
+      return {
+        display: detail,
+        spoken: "Configuration error: the AI assistant API key is not set. Please contact a staff member.",
+        permanent: true,
+      };
+    }
+    if (raw.startsWith("API_KEY_INVALID:")) {
+      const detail = raw.replace("API_KEY_INVALID:", "").trim();
+      return {
+        display: detail,
+        spoken: "Configuration error: the API key is invalid or unauthorized. Please contact a staff member.",
+        permanent: true,
+      };
+    }
+    if (raw.startsWith("RATE_LIMIT:429:")) {
+      const detail = raw.replace("RATE_LIMIT:429:", "").trim();
+      return {
+        display: `429 Too Many Requests — ${detail}`,
+        spoken: "The AI assistant is temporarily busy. Please wait a moment and try again.",
+        permanent: false,
+      };
+    }
+    if (raw.startsWith("API_ERROR:")) {
+      const detail = raw.replace("API_ERROR:", "").trim();
+      return {
+        display: `API Error — ${detail}`,
+        spoken: `An API error occurred: ${detail.replace(/^\d+:\s*/, "").slice(0, 120)}`,
+        permanent: false,
+      };
+    }
+    return {
+      display: `Unexpected error — ${raw}`,
+      spoken: "An unexpected error occurred. Please try again or contact a staff member.",
+      permanent: false,
+    };
+  }, []);
+
+  // ─── Startup API key check ────────────────────────────────────────────────
+  // API key validation is handled server-side in /api/gemini
 
   const addAIMessage = useCallback((text: string) => {
     setMessages((prev) => [
@@ -121,15 +168,27 @@ export default function WelcomePage() {
           collectedEmail: collectedEmail || undefined,
         });
         handleGeminiResponseRef.current(response.intent, response.reply, response.partySize, response.email, response.reservationCode);
-      } catch {
+      } catch (err) {
+        processingRef.current = false;
+        const errInfo = parseApiError(err);
+        if (errInfo.permanent) {
+          permanentErrorRef.current = true;
+          stopSpeech();
+        }
+        setApiErrorInfo(errInfo);
         setUIState("error");
-        setTimeout(() => {
-          processingRef.current = false;
-          startListeningRef.current();
-        }, 2000);
+        if (!errInfo.permanent) {
+          addAIMessage(errInfo.spoken);
+          speak(errInfo.spoken, () => {
+            setTimeout(() => {
+              setApiErrorInfo(null);
+              startListeningRef.current();
+            }, 2000);
+          });
+        }
       }
     },
-    [partySize, kioskState, collectedEmail, sendMessage]
+    [partySize, kioskState, collectedEmail, sendMessage, parseApiError, addAIMessage, speak, stopSpeech]
   );
 
   const {
@@ -249,36 +308,54 @@ export default function WelcomePage() {
             addAIMessage(reply);
             speakAndListen(reply);
           } else if (intent === "no_reservation") {
-            // Look up live table availability from the floor camera zones
-            void (async () => {
-              try {
-                const res = await fetch("/api/cameras/CAM-FLOOR/table-zones", { cache: "no-store" });
-                const data = res.ok ? (await res.json() as { zones?: { name: string; capacity: number; status: string }[] }) : {};
-                const zones = data.zones ?? [];
-                const freeTable = zones.find((z) => z.status === "free" && z.capacity >= partySize);
-
-                if (freeTable) {
-                  setKioskState("routing");
-                  const tableMsg = `Great news! ${freeTable.name} is ready for your party of ${partySize}. Please proceed to your table — a team member will be with you shortly.`;
-                  addAIMessage(tableMsg);
-                  setUIState("speaking");
-                  speak(tableMsg, () => {
-                    setTimeout(() => resetAndGreet(), 10000);
-                  });
-                } else {
-                  setKioskState("collect_email");
-                  const fullMsg = "It looks like all tables are currently full. Please say your email address and we'll notify you when a table is ready.";
-                  addAIMessage(fullMsg);
-                  speakAndListen(fullMsg);
-                }
-              } catch {
-                // API unreachable — assume full, collect email
+            if (!KIOSK_VISION_ENABLED) {
+              // Production: random table availability (no vision server)
+              const hasTable = Math.random() > 0.4;
+              if (hasTable) {
+                const tableNum = Math.floor(Math.random() * 9) + 1;
+                setKioskState("routing");
+                const tableMsg = `Great news! Table ${tableNum} is ready for your party of ${partySize}. Please proceed to your table — a team member will be with you shortly.`;
+                addAIMessage(tableMsg);
+                setUIState("speaking");
+                speak(tableMsg, () => { setTimeout(() => resetAndGreet(), 10000); });
+              } else {
                 setKioskState("collect_email");
                 const fullMsg = "It looks like all tables are currently full. Please say your email address and we'll notify you when a table is ready.";
                 addAIMessage(fullMsg);
                 speakAndListen(fullMsg);
               }
-            })();
+            } else {
+              // Dev: look up live table availability from the floor camera zones
+              void (async () => {
+                try {
+                  const res = await fetch("/api/cameras/CAM-FLOOR/table-zones", { cache: "no-store" });
+                  const data = res.ok ? (await res.json() as { zones?: { name: string; capacity: number; status: string }[] }) : {};
+                  const zones = data.zones ?? [];
+                  const freeTable = zones.find((z) => z.status === "free" && z.capacity >= partySize);
+
+                  if (freeTable) {
+                    setKioskState("routing");
+                    const tableMsg = `Great news! ${freeTable.name} is ready for your party of ${partySize}. Please proceed to your table — a team member will be with you shortly.`;
+                    addAIMessage(tableMsg);
+                    setUIState("speaking");
+                    speak(tableMsg, () => {
+                      setTimeout(() => resetAndGreet(), 10000);
+                    });
+                  } else {
+                    setKioskState("collect_email");
+                    const fullMsg = "It looks like all tables are currently full. Please say your email address and we'll notify you when a table is ready.";
+                    addAIMessage(fullMsg);
+                    speakAndListen(fullMsg);
+                  }
+                } catch {
+                  // API unreachable — assume full, collect email
+                  setKioskState("collect_email");
+                  const fullMsg = "It looks like all tables are currently full. Please say your email address and we'll notify you when a table is ready.";
+                  addAIMessage(fullMsg);
+                  speakAndListen(fullMsg);
+                }
+              })();
+            }
           }
           break;
 
@@ -396,6 +473,7 @@ export default function WelcomePage() {
 
     function fireGreeting(count: number) {
       if (detectionReadyRef.current) return; // already fired
+      if (permanentErrorRef.current) return; // blocked by config error
       detectionReadyRef.current = true;
 
       // Stop camera — no longer needed
@@ -415,6 +493,13 @@ export default function WelcomePage() {
         addAIMessage(greeting);
         speakAndListen(greeting);
       }
+    }
+
+    // Production: skip camera + vision server entirely — use random party size
+    if (!KIOSK_VISION_ENABLED) {
+      const randomSize = Math.floor(Math.random() * 5) + 1;
+      fireGreeting(randomSize);
+      return;
     }
 
     // Hard timeout — greet regardless after DETECTION_TIMEOUT_MS
@@ -532,12 +617,26 @@ export default function WelcomePage() {
           collectedEmail: collectedEmail || undefined,
         });
         handleGeminiResponseRef.current(response.intent, response.reply, response.partySize, response.email, response.reservationCode);
-      } catch {
+      } catch (err) {
+        const errInfo = parseApiError(err);
+        if (errInfo.permanent) {
+          permanentErrorRef.current = true;
+          stopSpeech();
+        }
+        setApiErrorInfo(errInfo);
         setUIState("error");
-        setTimeout(() => startListeningRef.current(), 2000);
+        if (!errInfo.permanent) {
+          addAIMessage(errInfo.spoken);
+          speak(errInfo.spoken, () => {
+            setTimeout(() => {
+              setApiErrorInfo(null);
+              startListeningRef.current();
+            }, 2000);
+          });
+        }
       }
     },
-    [sendMessage, partySize, kioskState, collectedEmail]
+    [sendMessage, partySize, kioskState, collectedEmail, parseApiError, addAIMessage, speak, stopSpeech]
   );
 
   const fallbackChips = useMemo(() => {
@@ -670,7 +769,24 @@ export default function WelcomePage() {
         </header>
 
         <div className="flex flex-1 items-center justify-center py-4">
-          <section className="flex w-full min-h-[72vh] flex-col rounded-[2rem] border border-white/65 bg-white/45 p-5 shadow-[0_20px_80px_rgba(25,34,52,0.12)] backdrop-blur-2xl md:p-7">
+          <section className="relative flex w-full min-h-[72vh] flex-col rounded-[2rem] border border-white/65 bg-white/45 p-5 shadow-[0_20px_80px_rgba(25,34,52,0.12)] backdrop-blur-2xl md:p-7">
+
+            {/* Permanent error overlay (missing / invalid API key) */}
+            {apiErrorInfo?.permanent && (
+              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-[2rem] bg-red-50/97 backdrop-blur-xl p-8 animate-fade-in">
+                <div className="mb-5 flex size-16 items-center justify-center rounded-full bg-red-100 border border-red-200">
+                  <svg className="size-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                </div>
+                <h2 className="mb-2 text-xl font-bold text-red-700">Configuration Error</h2>
+                <p className="mb-4 max-w-lg break-all rounded-xl border border-red-200 bg-red-100 px-5 py-3 text-center font-mono text-sm text-red-700">
+                  {apiErrorInfo.display}
+                </p>
+                <p className="text-sm text-red-500">Please contact a staff member to resolve this issue.</p>
+              </div>
+            )}
+
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 rounded-full border border-white/75 bg-white/55 px-3 py-1.5 backdrop-blur-lg">
               <span className={`relative inline-flex size-2.5 rounded-full ${
@@ -777,9 +893,9 @@ export default function WelcomePage() {
           </div>
 
             <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white/55 px-4 py-3 backdrop-blur-lg">
-            <p className="text-sm text-zinc-600">
-              {uiState === "error"
-                ? "Couldn&apos;t hear you clearly. Retrying..."
+            <p className={`text-sm ${uiState === "error" && apiErrorInfo && !apiErrorInfo.permanent ? "font-mono text-red-600 break-all" : "text-zinc-600"}`}>
+              {uiState === "error" && apiErrorInfo && !apiErrorInfo.permanent
+                ? apiErrorInfo.display
                 : "Tap the mic to interrupt or continue naturally."}
             </p>
             <button

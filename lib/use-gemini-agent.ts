@@ -191,11 +191,6 @@ export function useGeminiAgent() {
       userText: string,
       context: { detectedPartySize: number; currentState: KioskState; collectedEmail?: string }
     ): Promise<GeminiResponse> => {
-      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error('NEXT_PUBLIC_GEMINI_API_KEY is not set');
-      }
-
       // Build annotated user message with current state context
       const contextParts = [
         `currentState: ${context.currentState}`,
@@ -215,20 +210,28 @@ export function useGeminiAgent() {
         parts: [{ text: msg.text }],
       }));
 
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents,
-          }),
-        }
-      );
+      const res = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents,
+        }),
+      });
 
       if (!res.ok) {
-        throw new Error(`Gemini API error: ${res.status}`);
+        let errorMessage = '';
+        try {
+          const errData = await res.json() as { error?: string };
+          errorMessage = errData.error ?? '';
+        } catch {
+          // ignore parse failure
+        }
+
+        if (errorMessage.startsWith('API_KEY_MISSING:') || errorMessage.startsWith('API_KEY_INVALID:') || errorMessage.startsWith('RATE_LIMIT:') || errorMessage.startsWith('API_ERROR:')) {
+          throw new Error(errorMessage);
+        }
+        throw new Error(`API_ERROR:${res.status}: ${errorMessage || res.statusText}`);
       }
 
       const data = await res.json();

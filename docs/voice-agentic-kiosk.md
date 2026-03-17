@@ -210,10 +210,10 @@ Current context will be injected before each message:
 
 Add to `.env`:
 ```
-NEXT_PUBLIC_GEMINI_API_KEY=   # Google AI Studio API key
+GEMINI_API_KEY=   # Google AI Studio API key (server-side only)
 ```
 
-> The Gemini key is `NEXT_PUBLIC_` because the call is made client-side from the kiosk browser. In a production setting this should be proxied through a Next.js API route.
+> The Gemini key is read server-side by `app/api/gemini/route.ts`, which proxies requests from the kiosk to the Gemini API. The key is never sent to the browser.
 
 ---
 
@@ -224,7 +224,8 @@ NEXT_PUBLIC_GEMINI_API_KEY=   # Google AI Studio API key
 | `lib/useSpeechToText.ts` | **Create** — Web Speech API hook |
 | `lib/useGeminiAgent.ts` | **Create** — Gemini REST API hook |
 | `app/admin/customer/welcome-page/page.tsx` | **Rewrite** — voice-driven state machine |
-| `.env` / `env-example.txt` | **Update** — add `NEXT_PUBLIC_GEMINI_API_KEY` |
+| `app/api/gemini/route.ts` | **Create** — server-side Gemini proxy route |
+| `.env` / `env-example.txt` | **Update** — add `GEMINI_API_KEY` (server-side, no `NEXT_PUBLIC_` prefix) |
 
 ---
 
@@ -339,7 +340,7 @@ Both templates are plain HTML strings (no external email library) in `lib/emails
 
 ### SQL Migration
 
-Run `docs/sql/waitlist.sql` in the Supabase SQL Editor before using this flow.
+Run `sql/waitlist.sql` in the Supabase SQL Editor before using this flow.
 
 ---
 

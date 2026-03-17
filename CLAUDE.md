@@ -27,9 +27,10 @@ The product brand name is **Queuo**.
 - [docs/architecture.md](docs/architecture.md) — Full architecture reference: tech stack table, high-level system diagram (ASCII), kiosk voice flow, business dashboard data flow, waitlist algorithm, database schema, auth flow, and complete file map. Keep this updated when adding features.
 - [docs/architecture-diagram.md](docs/architecture-diagram.md) — Mermaid whiteboard diagram of the high-level system architecture. Renders in VS Code (Markdown Preview Mermaid Support extension), GitHub, or mermaid.live. References `architecture.md` for detail.
 - [docs/voice-agentic-kiosk.md](docs/voice-agentic-kiosk.md) — Design doc for the voice-agentic kiosk flow: STT → Gemini NLU → TTS state machine, component responsibilities, UX states, conversation bubble layout, fallback behaviour.
+- [docs/voice-agentic-kiosk-production.md](docs/voice-agentic-kiosk-production.md) — Production-mode kiosk flow diagram: shows how camera-driven decisions (party size, table availability) are replaced with random generation when `NODE_ENV === "production"`. Includes dev vs. production comparison table, ASCII flow, component behaviour pseudocode, and state machine reference.
 - [docs/Customer_Kiosk_Flow.md](docs/Customer_Kiosk_Flow.md) — Original kiosk screen flow wireframes and route map.
-- [docs/sql/table_zones.sql](docs/sql/table_zones.sql) — Migration: `table_zones` table.
-- [docs/sql/waitlist.sql](docs/sql/waitlist.sql) — Migration: `waitlist` table.
+- [sql/setup.sql](sql/setup.sql) — **The only file you need.** Run once in Supabase SQL Editor to create all tables and policies (safe to re-run). Includes `tables`, `table_zones`, `waitlist`, `profiles`, and all RLS policies.
+- [sql/old/](sql/old/) — Individual migration files kept for reference (`table_zones.sql`, `waitlist.sql`, `profiles.sql`, `rls_policies.sql`).
 
 ## Project: Reception Bot (Primary — Hack-Attack 2026)
 
@@ -40,7 +41,26 @@ A computer-vision-powered reception system for restaurants. An iPhone camera + Y
 - **Business Side (Staff Dashboard)** — Staff configure table zones and monitor floor state in real time
 - **Consumer Side (Kiosk)** — Guest-facing screen at the entrance; shows greeting and guides seating via tappable buttons
 
+### Production Deployment Behaviour
+
+- **`CAMERAS_ENABLED` flag** (business dashboard) — `const CAMERAS_ENABLED = process.env.NODE_ENV !== "production"`. In production, all camera and vision features are disabled at the source:
+  - No `getUserMedia` calls, no vision bridge started, no detection polling
+  - Camera tiles show "Camera not available" placeholder
+  - Zone editor modal, "Configure Floor Tables", and "Manage Zones" buttons are hidden; clicking camera tiles does nothing
+- **`KIOSK_VISION_ENABLED` flag** (kiosk welcome page) — `const KIOSK_VISION_ENABLED = process.env.NODE_ENV !== "production"`. In production, camera-driven kiosk decisions are replaced with random generation:
+  - **Party size** — `Math.floor(Math.random() * 5) + 1` (1–5 guests); no `getUserMedia` or vision server polling
+  - **Table availability** — `Math.random() > 0.4` (60% chance a table is free) → random `Table 1–9`; no `GET /api/cameras/CAM-FLOOR/table-zones` fetch
+  - All voice logic (STT → Gemini → TTS), reservation code flow, and email/waitlist remain fully active in production
+  - See [docs/voice-agentic-kiosk-production.md](docs/voice-agentic-kiosk-production.md) for the full production flow diagram
+- **Hydration fix** — `timestamp` initialises to `""` and `trafficSamples` initialises to `[]` on both server and client; both are populated in `useEffect` after mount. This eliminates the React error #418 hydration mismatch caused by `toLocaleTimeString()` and `localStorage` reads during SSR.
+- To simulate production locally: `npm run build && npm start`
+
 ### Recent Implemented Changes (March 2026)
+
+- **SQL directory moved to root**: `docs/sql/` has been moved to `sql/` at the project root. All references in `CLAUDE.md`, `GEMINI.md`, `README.md`, `docs/voice-agentic-kiosk.md`, and `vision/README.md` have been updated accordingly.
+
+
+- **Kiosk production mode (`KIOSK_VISION_ENABLED`)**: Welcome page now differentiates dev from production using `const KIOSK_VISION_ENABLED = process.env.NODE_ENV !== "production"`. In production, party-size detection is replaced with `Math.floor(Math.random() * 5) + 1` and table availability is replaced with `Math.random() > 0.4`. No camera permission is ever requested in production. Mirrors the `CAMERAS_ENABLED` pattern used in the business dashboard.
 
 - Admin table-zone setup is now integrated directly in the business dashboard modal (draw, edit, delete, save).
 - Table zone records are persisted in Supabase table `table_zones` with normalized bounds and per-table capacity.
@@ -68,6 +88,14 @@ A computer-vision-powered reception system for restaurants. An iPhone camera + Y
 - **Kiosk party-size detection (live)**: Welcome page now detects real party size via its own camera + vision server on mount. Opens `getUserMedia`, captures frames every 300ms, POSTs to `/detect`, stabilises across a 5-reading sliding window (all readings within ±1), then fires the greeting with the detected count. Falls back to asking the guest directly if the vision server is unreachable, camera is unavailable, or detection returns 0 after a 4-second timeout.
 - **Live table availability check**: The `no_reservation` branch no longer uses `Math.random()`. It now fetches `GET /api/cameras/CAM-FLOOR/table-zones` and finds the first zone where `status === "free"` AND `capacity >= partySize`. If found, the kiosk announces that specific table by name. If all tables are full or none can fit the party, it falls through to the email/waitlist flow. API errors default to the waitlist path.
 - **Voice-agentic reservation flow (updated)**: When a guest says they have a reservation, the kiosk now asks for a 3-digit reservation code (001–099) instead of an email address. Gemini extracts and zero-pads the spoken number (e.g. "seventy two" → `"072"`). On a valid code, the kiosk responds: *"Got it! Your reservation has been confirmed. Please proceed to table [N]."* where N is a random number 1–9 generated at runtime. The `collect_reservation_email` kiosk state has been replaced by `collect_reservation_code`, and a new `provide_reservation_code` Gemini intent handles this flow. The `GeminiResponse` type now includes a `reservationCode: string | null` field.
+- **Kiosk API error handling (robust)**:
+  - `lib/use-gemini-agent.ts` throws structured, prefixed errors: `API_KEY_MISSING:`, `API_KEY_INVALID:<status>:`, `RATE_LIMIT:429:`, `API_ERROR:<status>:`. Each includes the raw error body so the exact message is surfaced.
+  - Permanent errors (missing/invalid key): show a full-screen red overlay with error detail; suppress TTS and the greeting entirely via `permanentErrorRef`; do not auto-clear.
+  - Transient errors (429 rate limit, other HTTP errors): speak the error aloud, show it in the bottom bar in red monospace, then auto-retry after 2 s.
+  - `processingRef` is reset immediately at the top of every catch block so the next STT result is never silently dropped.
+  - `stopSpeech()` is called whenever a permanent error is set, including from the runtime catch paths.
+- **Gemini API key moved server-side**: The Gemini API key is now `GEMINI_API_KEY` (no `NEXT_PUBLIC_` prefix) and is never sent to the browser. `lib/use-gemini-agent.ts` calls `POST /api/gemini` (a Next.js API route) which reads the key server-side and proxies the request to Gemini. The client-side startup key-format check has been removed.
+
 - **Waitlist email flow (fully implemented)**:
   - When a guest's email is confirmed on the kiosk (`confirm_email` + `email_confirmed`), the welcome page POSTs to `POST /api/waitlist` with `{ email, partySize }`.
   - The API calculates an estimated wait time using the **dwell-time algorithm** (see below) and inserts a row into the `waitlist` Supabase table.
@@ -121,14 +149,15 @@ The welcome page automatically reads all messages aloud using the Web Speech API
 - Party size announcement speaks after greeting
 - Reservation prompt speaks after party size message
 
-The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a speaking rate of 1.5x to deliver messages faster.
+The `useTextToSpeech` hook (in `lib/use-text-to-speech.ts`) is configured with a speaking rate of 1.5x to deliver messages faster.
 
 ## Architecture
 
 - **[app/](app/)** — Next.js App Router. Contains:
-  - [app/page.tsx](app/page.tsx) — Public marketing/landing page
-  - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth); redirects to `/admin/entry` on success
-  - [app/logout/page.tsx](app/logout/page.tsx) — Logout route; signs out and redirects to `/login`
+  - [app/page.tsx](app/page.tsx) — Public marketing/landing page; async Server Component; calls `getServerUser()` to read auth state and renders an auth-aware navbar: unauthenticated shows Login + Contact, authenticated shows only `UserMenu` icon (Contact is hidden when logged in)
+  - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth); redirects to `/admin/entry` on success; links to `/register`
+  - [app/register/page.tsx](app/register/page.tsx) — Registration page; calls `supabaseBrowser.auth.signUp()`; validates passwords client-side; redirects to `/admin/entry` on success (requires email confirmation disabled in Supabase Dashboard → Authentication → Settings)
+  - [app/logout/route.ts](app/logout/route.ts) — Logout route handler (`GET`); signs out server-side via `@supabase/ssr`, then immediately `302`-redirects to `/`. No client render — eliminates the white flash of the old client-side approach.
   - [app/admin/](app/admin/) — Kiosk-facing guest-interaction interface and admin routes (protected by `proxy.ts`):
     - [app/admin/layout.tsx](app/admin/layout.tsx) — Admin layout wrapper
     - [app/admin/page.tsx](app/admin/page.tsx) — Admin home/dashboard
@@ -152,14 +181,19 @@ The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a sp
   - [app/api/cameras/[cameraId]/table-zones/route.ts](app/api/cameras/[cameraId]/table-zones/route.ts) — `GET`/`PUT` table-zone persistence for dashboard (validates bounds/capacity, upserts, deletes removed zones).
   - [app/api/cameras/[cameraId]/table-occupancy/route.ts](app/api/cameras/[cameraId]/table-occupancy/route.ts) — `POST` occupancy transitions (`free`/`occupied`) and `seated_at` updates per zone. On `occupied → free` transition, queries `waitlist` for next fitting guest, sets `notified_at`, and sends "table ready" email via Resend.
   - [app/api/waitlist/route.ts](app/api/waitlist/route.ts) — `POST` joins a guest to the waitlist: runs dwell-time wait algorithm, inserts into `waitlist`, sends confirmation email. `GET` returns all unnotified entries ordered by `joined_at`.
+  - [app/api/gemini/route.ts](app/api/gemini/route.ts) — `POST /api/gemini`; server-side proxy to Gemini `generateContent` API. Reads `GEMINI_API_KEY` (never exposed to browser); forwards the request body verbatim; maps Gemini HTTP errors to structured prefixed error strings (`API_KEY_MISSING:`, `API_KEY_INVALID:`, `RATE_LIMIT:`, `API_ERROR:`) for the client to parse.
 - **[lib/](lib/)** — Shared service clients:
   - [lib/supabase.ts](lib/supabase.ts) — Server-side Supabase client (`SUPABASE_URL` + `SUPABASE_SECRET_KEY`); bypasses RLS; use in API routes and server actions only
   - [lib/supabase-browser.ts](lib/supabase-browser.ts) — Browser-side Supabase client (`NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY`); uses `@supabase/ssr` `createBrowserClient`; stores session in cookies for proxy access
   - [lib/resend.ts](lib/resend.ts) — Resend client (`RESEND_API_KEY`); sends waitlist-ready and reservation confirmation emails
   - [lib/emails/waitlist-confirmation.ts](lib/emails/waitlist-confirmation.ts) — HTML email template: waitlist confirmation with estimated wait time and queue position; Queuo black/zinc brand design
   - [lib/emails/table-ready.ts](lib/emails/table-ready.ts) — HTML email template: "your table is ready" notification with table name; dark hero + brand design
+  - [lib/get-session.ts](lib/get-session.ts) — `getServerUser()` helper; reads Supabase session server-side via `@supabase/ssr` + Next.js `cookies()`; returns the current `User` or `null`; use in any async Server Component instead of duplicating the cookie client setup
   - [lib/utils.ts](lib/utils.ts) — `cn` helper for Tailwind class merging
-  - [lib/useTextToSpeech.ts](lib/useTextToSpeech.ts) — Custom React hook for text-to-speech using Web Speech API; provides `speak()`, `stop()`, and `isSpeaking()` functions with configurable rate, pitch, volume, and language
+  - [lib/use-text-to-speech.ts](lib/use-text-to-speech.ts) — Custom React hook for text-to-speech using Web Speech API; provides `speak()`, `stop()`, and `isSpeaking()` functions with configurable rate, pitch, volume, and language
+  - [lib/use-speech-to-text.ts](lib/use-speech-to-text.ts) — Custom React hook for speech-to-text using the Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`); provides `start()`, `stop()`, `transcript`, `isListening`, and `isSupported`
+  - [lib/use-gemini-agent.ts](lib/use-gemini-agent.ts) — Custom React hook that manages conversation history and sends messages to `POST /api/gemini`; parses structured `GeminiResponse` JSON (intent, partySize, email, reservationCode); exports `GeminiIntent` and `GeminiResponse` types
+- **[components/UserMenu.tsx](components/UserMenu.tsx)** — Client component; renders a `frosted-pill` circular trigger (matches the design system's pill language — `bg-white/50 border-white/72 backdrop-blur`) that opens a shadcn `DropdownMenu`. Dropdown uses the same `frosted-surface` values as `GlassPanel` with ambient sky/indigo orbs. Shows signed-in email + "Your account", **Dashboard** → `/admin/entry`, and **Sign out** → `/logout`. Trigger lifts `−0.5` on hover. Accepts a Supabase `User` prop from the server.
 - **[proxy.ts](proxy.ts)** — Next.js 16 proxy (replaces `middleware.ts`); protects all `/admin/*` routes; redirects unauthenticated users to `/login`
 - **[tests/](tests/)** — Connectivity tests for Supabase and Resend
 - **[vision/](vision/)** — Python vision microservice (see full breakdown below)
@@ -169,32 +203,10 @@ The `useTextToSpeech` hook (in `lib/useTextToSpeech.ts`) is configured with a sp
 - `table_zones` — dashboard-configured floor zones: `id`, `camera_id`, `name`, `capacity`, normalized bounds (`x`,`y`,`w`,`h`), `status`, `seated_at`
 - `reservations` — `id`, `guest_name`, `party_size`, `reserved_for` (timestamp), `table_id`, `status`
 - `waitlist` — `id`, `guest_name`, `party_size`, `email`, `joined_at`, `notified_at`
+- `profiles` — one row per auth user: `id` (FK → `auth.users`), `email`, `role` (`'user'`/`'admin'`), `created_at`. Auto-created on signup via trigger. Promote to admin with: `update public.profiles set role = 'admin' where email = '...';`
 
-#### Migration: create `tables`
-Run in Supabase SQL Editor to create the `tables` table (required for the zone editor save):
-```sql
-create table public.tables (
-  id uuid primary key default gen_random_uuid(),
-  name text not null unique,
-  capacity integer not null default 4,
-  status text not null default 'free' check (status in ('free', 'occupied', 'reserved')),
-  seated_at timestamptz
-);
-```
-
-#### Migration: create `table_zones`
-Run:
-```sql
--- Supabase SQL Editor
-docs/sql/table_zones.sql
-```
-
-#### Migration: create `waitlist`
-Run:
-```sql
--- Supabase SQL Editor
-docs/sql/waitlist.sql
-```
+#### Setup
+Paste [sql/setup.sql](sql/setup.sql) into the Supabase SQL Editor and run. Creates all tables and RLS policies in one shot, safe to re-run.
 
 ---
 
@@ -326,6 +338,7 @@ NEXT_PUBLIC_SUPABASE_URL=       # Same value as SUPABASE_URL (browser-safe)
 NEXT_PUBLIC_SUPABASE_ANON_KEY=  # anon/public key (browser-safe)
 RESEND_API_KEY=
 RESEND_TEST_EMAIL=              # Your Resend account email — used by npm run test:resend
+GEMINI_API_KEY=                 # Google AI Studio API key (server-side only, used by /api/gemini proxy)
 ```
 
 **Getting credentials:**
@@ -357,7 +370,15 @@ npm run dev
 ## Auth
 
 - Login: `POST /login` via `supabaseBrowser.auth.signInWithPassword`
+- Register: `/register` via `supabaseBrowser.auth.signUp`; email confirmation must be **disabled** in Supabase Dashboard → Authentication → Settings for immediate sign-in after registration
 - Logout: visit `/logout` — signs out and redirects to `/login`
 - Protected routes: all `/admin/*` routes are guarded by `proxy.ts`; unauthenticated requests redirect to `/login`
 - Session storage: cookies (via `@supabase/ssr`) so the proxy can read auth state server-side
 - **Do not use `lib/supabase.ts` (secret key) for client-side auth** — only use `lib/supabase-browser.ts`
+- **RBAC**: `profiles` table stores `role` (`'user'`/`'admin'`); new signups default to `'user'` via trigger. RLS policies block direct database access (via Supabase dashboard, REST API, or anon key) for non-admin users. All app routes and API routes are intentionally open to any authenticated user — the RLS layer is purely a guard against external DB manipulation, not in-app access control.
+
+| Where | Who | Can touch DB? |
+|---|---|---|
+| Web app API routes | any user | Yes (service role bypasses RLS) |
+| Direct Supabase access | admin | Yes (RLS allows) |
+| Direct Supabase access | regular user | No (RLS blocks) |
