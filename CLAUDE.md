@@ -143,10 +143,10 @@ The `useTextToSpeech` hook (in `lib/use-text-to-speech.ts`) is configured with a
 ## Architecture
 
 - **[app/](app/)** — Next.js App Router. Contains:
-  - [app/page.tsx](app/page.tsx) — Public marketing/landing page
+  - [app/page.tsx](app/page.tsx) — Public marketing/landing page; async Server Component; calls `getServerUser()` to read auth state and renders an auth-aware navbar: unauthenticated shows Login + Contact, authenticated shows `UserMenu` icon + Contact (Contact always rightmost)
   - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth); redirects to `/admin/entry` on success; links to `/register`
   - [app/register/page.tsx](app/register/page.tsx) — Registration page; calls `supabaseBrowser.auth.signUp()`; validates passwords client-side; redirects to `/admin/entry` on success (requires email confirmation disabled in Supabase Dashboard → Authentication → Settings)
-  - [app/logout/page.tsx](app/logout/page.tsx) — Logout route; signs out and redirects to `/login`
+  - [app/logout/page.tsx](app/logout/page.tsx) — Logout route; signs out and redirects to `/`
   - [app/admin/](app/admin/) — Kiosk-facing guest-interaction interface and admin routes (protected by `proxy.ts`):
     - [app/admin/layout.tsx](app/admin/layout.tsx) — Admin layout wrapper
     - [app/admin/page.tsx](app/admin/page.tsx) — Admin home/dashboard
@@ -177,10 +177,12 @@ The `useTextToSpeech` hook (in `lib/use-text-to-speech.ts`) is configured with a
   - [lib/resend.ts](lib/resend.ts) — Resend client (`RESEND_API_KEY`); sends waitlist-ready and reservation confirmation emails
   - [lib/emails/waitlist-confirmation.ts](lib/emails/waitlist-confirmation.ts) — HTML email template: waitlist confirmation with estimated wait time and queue position; Queuo black/zinc brand design
   - [lib/emails/table-ready.ts](lib/emails/table-ready.ts) — HTML email template: "your table is ready" notification with table name; dark hero + brand design
+  - [lib/get-session.ts](lib/get-session.ts) — `getServerUser()` helper; reads Supabase session server-side via `@supabase/ssr` + Next.js `cookies()`; returns the current `User` or `null`; use in any async Server Component instead of duplicating the cookie client setup
   - [lib/utils.ts](lib/utils.ts) — `cn` helper for Tailwind class merging
   - [lib/use-text-to-speech.ts](lib/use-text-to-speech.ts) — Custom React hook for text-to-speech using Web Speech API; provides `speak()`, `stop()`, and `isSpeaking()` functions with configurable rate, pitch, volume, and language
   - [lib/use-speech-to-text.ts](lib/use-speech-to-text.ts) — Custom React hook for speech-to-text using the Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`); provides `start()`, `stop()`, `transcript`, `isListening`, and `isSupported`
   - [lib/use-gemini-agent.ts](lib/use-gemini-agent.ts) — Custom React hook that manages conversation history and sends messages to `POST /api/gemini`; parses structured `GeminiResponse` JSON (intent, partySize, email, reservationCode); exports `GeminiIntent` and `GeminiResponse` types
+- **[components/UserMenu.tsx](components/UserMenu.tsx)** — Client component; renders a circular user-icon button that opens a shadcn `DropdownMenu` with frosted-glass styling (gradient orbs, `backdrop-blur-2xl`, `bg-white/40`). Shows the signed-in email, **Dashboard** → `/admin/entry`, and **Logout** → `/logout`. Accepts a Supabase `User` prop passed from the server.
 - **[proxy.ts](proxy.ts)** — Next.js 16 proxy (replaces `middleware.ts`); protects all `/admin/*` routes; redirects unauthenticated users to `/login`
 - **[tests/](tests/)** — Connectivity tests for Supabase and Resend
 - **[vision/](vision/)** — Python vision microservice (see full breakdown below)
