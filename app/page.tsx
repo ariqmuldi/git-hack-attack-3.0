@@ -30,21 +30,23 @@ export default async function Home() {
             {user ? (
               <UserMenu user={user} />
             ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-10 rounded-full px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-600 hover:bg-white/60"
-                asChild
-              >
-                <a href="/login">Login</a>
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-10 rounded-full px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-600 hover:bg-white/60"
+                  asChild
+                >
+                  <a href="/login">Login</a>
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-10 rounded-full bg-black px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white hover:bg-zinc-800"
+                >
+                  Contact
+                </Button>
+              </>
             )}
-            <Button
-              size="sm"
-              className="h-10 rounded-full bg-black px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white hover:bg-zinc-800"
-            >
-              Contact
-            </Button>
           </div>
         </div>
       </header>

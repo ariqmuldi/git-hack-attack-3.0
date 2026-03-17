@@ -15,13 +15,13 @@ export function UserMenu({ user }: { user: User }) {
       <DropdownMenuTrigger asChild>
         <button
           aria-label="User menu"
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/60 text-zinc-600 shadow-sm ring-1 ring-white/70 backdrop-blur-sm transition-all hover:bg-white/80 hover:shadow-md focus:outline-none"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-transparent text-black transition-all hover:bg-white/50 hover:shadow-sm focus:outline-none"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 24 24"
             fill="currentColor"
-            className="h-[17px] w-[17px]"
+            className="h-[22px] w-[22px]"
           >
             <path
               fillRule="evenodd"
