@@ -2,8 +2,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { FrostedPage, GlassPanel, FrostedPill } from "@/components/ui/frosted-shell";
+import { UserMenu } from "@/components/UserMenu";
+import { getServerUser } from "@/lib/get-session";
 
-export default function Home() {
+export default async function Home() {
+  const user = await getServerUser();
+
   return (
     <FrostedPage className="font-sans">
 
@@ -23,14 +27,18 @@ export default function Home() {
 
           {/* Actions */}
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-10 rounded-full px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-600 hover:bg-white/60"
-              asChild
-            >
-              <a href="/login">Login</a>
-            </Button>
+            {user ? (
+              <UserMenu user={user} />
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-10 rounded-full px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-600 hover:bg-white/60"
+                asChild
+              >
+                <a href="/login">Login</a>
+              </Button>
+            )}
             <Button
               size="sm"
               className="h-10 rounded-full bg-black px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white hover:bg-zinc-800"
