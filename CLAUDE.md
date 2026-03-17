@@ -143,10 +143,10 @@ The `useTextToSpeech` hook (in `lib/use-text-to-speech.ts`) is configured with a
 ## Architecture
 
 - **[app/](app/)** — Next.js App Router. Contains:
-  - [app/page.tsx](app/page.tsx) — Public marketing/landing page; async Server Component; calls `getServerUser()` to read auth state and renders an auth-aware navbar: unauthenticated shows Login + Contact, authenticated shows `UserMenu` icon + Contact (Contact always rightmost)
+  - [app/page.tsx](app/page.tsx) — Public marketing/landing page; async Server Component; calls `getServerUser()` to read auth state and renders an auth-aware navbar: unauthenticated shows Login + Contact, authenticated shows only `UserMenu` icon (Contact is hidden when logged in)
   - [app/login/page.tsx](app/login/page.tsx) — Login page (Supabase email/password auth); redirects to `/admin/entry` on success; links to `/register`
   - [app/register/page.tsx](app/register/page.tsx) — Registration page; calls `supabaseBrowser.auth.signUp()`; validates passwords client-side; redirects to `/admin/entry` on success (requires email confirmation disabled in Supabase Dashboard → Authentication → Settings)
-  - [app/logout/page.tsx](app/logout/page.tsx) — Logout route; signs out and redirects to `/`
+  - [app/logout/route.ts](app/logout/route.ts) — Logout route handler (`GET`); signs out server-side via `@supabase/ssr`, then immediately `302`-redirects to `/`. No client render — eliminates the white flash of the old client-side approach.
   - [app/admin/](app/admin/) — Kiosk-facing guest-interaction interface and admin routes (protected by `proxy.ts`):
     - [app/admin/layout.tsx](app/admin/layout.tsx) — Admin layout wrapper
     - [app/admin/page.tsx](app/admin/page.tsx) — Admin home/dashboard
@@ -182,7 +182,7 @@ The `useTextToSpeech` hook (in `lib/use-text-to-speech.ts`) is configured with a
   - [lib/use-text-to-speech.ts](lib/use-text-to-speech.ts) — Custom React hook for text-to-speech using Web Speech API; provides `speak()`, `stop()`, and `isSpeaking()` functions with configurable rate, pitch, volume, and language
   - [lib/use-speech-to-text.ts](lib/use-speech-to-text.ts) — Custom React hook for speech-to-text using the Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`); provides `start()`, `stop()`, `transcript`, `isListening`, and `isSupported`
   - [lib/use-gemini-agent.ts](lib/use-gemini-agent.ts) — Custom React hook that manages conversation history and sends messages to `POST /api/gemini`; parses structured `GeminiResponse` JSON (intent, partySize, email, reservationCode); exports `GeminiIntent` and `GeminiResponse` types
-- **[components/UserMenu.tsx](components/UserMenu.tsx)** — Client component; renders a circular user-icon button that opens a shadcn `DropdownMenu` with frosted-glass styling (gradient orbs, `backdrop-blur-2xl`, `bg-white/40`). Shows the signed-in email, **Dashboard** → `/admin/entry`, and **Logout** → `/logout`. Accepts a Supabase `User` prop passed from the server.
+- **[components/UserMenu.tsx](components/UserMenu.tsx)** — Client component; renders a `frosted-pill` circular trigger (matches the design system's pill language — `bg-white/50 border-white/72 backdrop-blur`) that opens a shadcn `DropdownMenu`. Dropdown uses the same `frosted-surface` values as `GlassPanel` with ambient sky/indigo orbs. Shows signed-in email + "Your account", **Dashboard** → `/admin/entry`, and **Sign out** → `/logout`. Trigger lifts `−0.5` on hover. Accepts a Supabase `User` prop from the server.
 - **[proxy.ts](proxy.ts)** — Next.js 16 proxy (replaces `middleware.ts`); protects all `/admin/*` routes; redirects unauthenticated users to `/login`
 - **[tests/](tests/)** — Connectivity tests for Supabase and Resend
 - **[vision/](vision/)** — Python vision microservice (see full breakdown below)
